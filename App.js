@@ -46,6 +46,8 @@ export default function App() {
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [typingText, setTypingText] = useState(''); // For typing animation
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [selectedModel, setSelectedModel] = useState('openai'); // NEW: AI model selection
+  const [availableModels, setAvailableModels] = useState({}); // NEW: Available models from server
   const scrollViewRef = useRef(null);
   
   // Animation values
@@ -60,6 +62,22 @@ export default function App() {
     { id: 'science', name: 'Science', icon: 'flask', color: '#ef4444' }
   ];
 
+  // NEW: AI Model configurations
+  const modelConfigs = {
+    openai: {
+      name: 'OpenAI',
+      icon: 'flash',
+      color: '#10b981',
+      description: 'GPT-4o-mini - Great for broad knowledge'
+    },
+    claude: {
+      name: 'Claude',
+      icon: 'library',
+      color: '#8b5cf6',
+      description: 'Anthropic Claude - Excellent reasoning'
+    }
+  };
+
   const scrollToBottom = () => {
     setTimeout(() => {
       scrollViewRef.current?.scrollToEnd({ animated: true });
@@ -69,6 +87,36 @@ export default function App() {
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  // NEW: Fetch available models on app start
+  useEffect(() => {
+    fetchAvailableModels();
+  }, []);
+
+  // NEW: Fetch available models from server
+  const fetchAvailableModels = async () => {
+    try {
+      const serverUrl = getServerUrl();
+      const response = await fetch(`${serverUrl}/api/models`);
+      
+      if (response.ok) {
+        const data = await response.json();
+        setAvailableModels(data.models);
+        
+        // Set default model to first available one
+        const firstAvailable = Object.keys(data.models).find(key => data.models[key].available);
+        if (firstAvailable && !data.models[selectedModel]?.available) {
+          setSelectedModel(firstAvailable);
+        }
+      }
+    } catch (error) {
+      console.log('Could not fetch model availability:', error);
+      // Set default fallback
+      setAvailableModels({
+        openai: { available: true, name: 'OpenAI GPT-4o-mini', description: 'Advanced AI with broad knowledge' }
+      });
+    }
+  };
 
   // Menu animation effect
   useEffect(() => {
@@ -196,6 +244,26 @@ export default function App() {
       setIsSpeaking(false);
     }
     setIsMuted(!isMuted);
+  };
+
+  // NEW: Model selector function
+  const selectModel = (modelKey) => {
+    if (availableModels[modelKey]?.available) {
+      setSelectedModel(modelKey);
+      setIsMenuOpen(false);
+      
+      // Add a message to show model switch
+      const switchMessage = {
+        id: Date.now(),
+        text: `Switched to ${modelConfigs[modelKey].name}! ${modelConfigs[modelKey].description}`,
+        sender: 'system',
+        timestamp: new Date().toLocaleTimeString()
+      };
+      
+      if (messages.length > 0) {
+        setMessages(prev => [...prev, switchMessage]);
+      }
+    }
   };
 
   const handleMicrophonePress = async () => {
@@ -393,6 +461,7 @@ export default function App() {
     }
   };
 
+  // UPDATED: Get tutor response with model selection
   const getTutorResponse = async (userMessage, subject) => {
     try {
       // PRODUCTION: Use dynamic server URL
@@ -406,10 +475,13 @@ export default function App() {
         body: JSON.stringify({
           message: userMessage,
           subject: subject,
-          conversationHistory: messages.map(msg => ({
-            role: msg.sender === 'user' ? 'user' : 'assistant',
-            content: msg.text
-          }))
+          model: selectedModel, // NEW: Include selected model
+          conversationHistory: messages
+            .filter(msg => msg.sender !== 'system') // Exclude system messages
+            .map(msg => ({
+              role: msg.sender === 'user' ? 'user' : 'assistant',
+              content: msg.text
+            }))
         })
       });
 
@@ -567,6 +639,57 @@ export default function App() {
 
             <View style={styles.menuDivider} />
 
+            {/* NEW: AI Model Selection */}
+            <Text style={styles.menuSectionTitle}>AI Model</Text>
+            {Object.keys(modelConfigs).map((modelKey) => {
+              const model = modelConfigs[modelKey];
+              const isAvailable = availableModels[modelKey]?.available;
+              const isSelected = selectedModel === modelKey;
+              
+              return (
+                <TouchableOpacity
+                  key={modelKey}
+                  style={[
+                    styles.menuItem,
+                    isSelected && styles.menuItemActive,
+                    !isAvailable && styles.menuItemDisabled
+                  ]}
+                  onPress={() => selectModel(modelKey)}
+                  disabled={!isAvailable}
+                >
+                  <View style={[
+                    styles.menuIconContainer, 
+                    { backgroundColor: isAvailable ? model.color : '#9ca3af' }
+                  ]}>
+                    <Ionicons name={model.icon} size={20} color="white" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[
+                      styles.menuItemText,
+                      isSelected && styles.menuItemTextActive,
+                      !isAvailable && styles.menuItemTextDisabled
+                    ]}>
+                      {model.name}
+                    </Text>
+                    <Text style={[
+                      styles.menuItemSubtext,
+                      !isAvailable && styles.menuItemTextDisabled
+                    ]}>
+                      {isAvailable ? model.description : 'Not available'}
+                    </Text>
+                  </View>
+                  {isSelected && isAvailable && (
+                    <Ionicons name="checkmark-circle" size={20} color={model.color} />
+                  )}
+                  {!isAvailable && (
+                    <Ionicons name="close-circle" size={20} color="#9ca3af" />
+                  )}
+                </TouchableOpacity>
+              );
+            })}
+
+            <View style={styles.menuDivider} />
+
             <Text style={styles.menuSectionTitle}>Subjects</Text>
             {subjects.map((subject) => (
               <TouchableOpacity
@@ -635,6 +758,28 @@ export default function App() {
               Mode: {__DEV__ ? 'Development 🛠️' : 'Production 🚀'}
             </Text>
           </View>
+
+          {/* NEW: AI Model Display */}
+          <View style={styles.modelSelector}>
+            <Text style={styles.modelSelectorLabel}>AI Model:</Text>
+            <TouchableOpacity
+              style={[
+                styles.modelButton,
+                { backgroundColor: modelConfigs[selectedModel]?.color || '#6b7280' }
+              ]}
+              onPress={toggleMenu}
+            >
+              <Ionicons 
+                name={modelConfigs[selectedModel]?.icon || 'help'} 
+                size={16} 
+                color="white" 
+              />
+              <Text style={styles.modelButtonText}>
+                {modelConfigs[selectedModel]?.name || 'Unknown'}
+              </Text>
+              <Ionicons name="chevron-down" size={16} color="white" />
+            </TouchableOpacity>
+          </View>
           
           <TouchableOpacity
             style={[styles.voiceToggle, isMuted ? styles.voiceMuted : styles.voiceOn]}
@@ -691,6 +836,21 @@ export default function App() {
           </View>
         </View>
         <View style={styles.headerRight}>
+          {/* NEW: Model indicator in header */}
+          <TouchableOpacity
+            style={[
+              styles.modelIndicator,
+              { backgroundColor: modelConfigs[selectedModel]?.color || '#6b7280' }
+            ]}
+            onPress={toggleMenu}
+          >
+            <Ionicons 
+              name={modelConfigs[selectedModel]?.icon || 'help'} 
+              size={14} 
+              color="white" 
+            />
+          </TouchableOpacity>
+          
           <TouchableOpacity
             style={[styles.voiceButton, isMuted ? styles.voiceMuted : styles.voiceOn]}
             onPress={toggleMute}
@@ -716,18 +876,21 @@ export default function App() {
             key={message.id}
             style={[
               styles.messageRow,
-              message.sender === 'user' ? styles.userRow : styles.tutorRow
+              message.sender === 'user' ? styles.userRow : 
+              message.sender === 'system' ? styles.systemRow : styles.tutorRow
             ]}
           >
             <View
               style={[
                 styles.messageBubble,
-                message.sender === 'user' ? styles.userBubble : styles.tutorBubble
+                message.sender === 'user' ? styles.userBubble : 
+                message.sender === 'system' ? styles.systemBubble : styles.tutorBubble
               ]}
             >
               <Text style={[
                 styles.messageText,
-                message.sender === 'user' ? styles.userText : styles.tutorText
+                message.sender === 'user' ? styles.userText : 
+                message.sender === 'system' ? styles.systemText : styles.tutorText
               ]}>
                 {message.text}
               </Text>
@@ -738,7 +901,9 @@ export default function App() {
         {isLoading && (
           <View style={styles.messageRow}>
             <View style={[styles.messageBubble, styles.tutorBubble]}>
-              <Text style={styles.tutorText}>Thinking...</Text>
+              <Text style={styles.tutorText}>
+                {modelConfigs[selectedModel]?.name} is thinking...
+              </Text>
             </View>
           </View>
         )}
@@ -854,6 +1019,39 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: '#5b21b6',
+  },
+  // NEW: Model selector styles
+  modelSelector: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  modelSelectorLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#374151',
+    marginRight: 8,
+  },
+  modelButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    gap: 6,
+  },
+  modelButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: 'white',
+  },
+  modelIndicator: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 8,
   },
   voiceToggle: {
     flexDirection: 'row',
@@ -997,6 +1195,9 @@ const styles = StyleSheet.create({
   menuItemActive: {
     backgroundColor: '#f0f9ff',
   },
+  menuItemDisabled: {
+    opacity: 0.5,
+  },
   menuIconContainer: {
     width: 36,
     height: 36,
@@ -1014,6 +1215,14 @@ const styles = StyleSheet.create({
   menuItemTextActive: {
     color: '#1d4ed8',
     fontWeight: '600',
+  },
+  menuItemTextDisabled: {
+    color: '#9ca3af',
+  },
+  menuItemSubtext: {
+    fontSize: 12,
+    color: '#6b7280',
+    marginTop: 2,
   },
   menuDivider: {
     height: 1,
@@ -1046,6 +1255,9 @@ const styles = StyleSheet.create({
   tutorRow: {
     alignItems: 'flex-start',
   },
+  systemRow: {
+    alignItems: 'center',
+  },
   messageBubble: {
     maxWidth: '80%',
     padding: 12,
@@ -1059,6 +1271,11 @@ const styles = StyleSheet.create({
     borderLeftWidth: 3,
     borderLeftColor: '#c4b5fd',
   },
+  systemBubble: {
+    backgroundColor: '#f0f9ff',
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+  },
   messageText: {
     fontSize: 15,
     lineHeight: 20,
@@ -1068,6 +1285,11 @@ const styles = StyleSheet.create({
   },
   tutorText: {
     color: '#1f2937',
+  },
+  systemText: {
+    color: '#1e40af',
+    fontStyle: 'italic',
+    textAlign: 'center',
   },
   inputBar: {
     flexDirection: 'row',
