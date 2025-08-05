@@ -1,4 +1,4 @@
-// App.js - Complete File with Conversation History Access
+// App.js - Complete File with Fixed Hamburger Menu
 import React, { useState, useRef, useEffect } from 'react';
 import { 
   View, 
@@ -54,7 +54,8 @@ const LilibetApp = () => {
   const scrollViewRef = useRef(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const recordingScale = useRef(new Animated.Value(1)).current;
-  const slideAnim = useRef(new Animated.Value(-screenWidth * 0.75)).current;
+  const slideAnim = useRef(new Animated.Value(-screenWidth * 0.8)).current;
+  const overlayOpacity = useRef(new Animated.Value(0)).current;
 
   const subjects = [
     { id: 'math', name: 'Math', icon: 'calculator', color: '#3b82f6' },
@@ -81,17 +82,48 @@ const LilibetApp = () => {
   // Auto-save conversation after every complete message exchange
   useEffect(() => {
     if (messages.length > 0 && currentSubject && auth.isAuthenticated) {
-      // Save immediately after each message exchange (user + tutor response)
       const lastMessage = messages[messages.length - 1];
       if (lastMessage && lastMessage.sender === 'tutor') {
-        // Only save when tutor has responded (complete exchange)
         handleSaveConversation();
       } else {
-        // Mark as unsaved when user sends a message
         setHasUnsavedChanges(true);
       }
     }
   }, [messages, currentSubject]);
+
+  // Menu animation functions
+  const openMenu = () => {
+    setIsMenuOpen(true);
+    Animated.parallel([
+      Animated.timing(slideAnim, {
+        toValue: 0,
+        duration: 250,
+        useNativeDriver: false,
+      }),
+      Animated.timing(overlayOpacity, {
+        toValue: 0.5,
+        duration: 250,
+        useNativeDriver: false,
+      })
+    ]).start();
+  };
+
+  const closeMenu = () => {
+    Animated.parallel([
+      Animated.timing(slideAnim, {
+        toValue: -screenWidth * 0.8,
+        duration: 250,
+        useNativeDriver: false,
+      }),
+      Animated.timing(overlayOpacity, {
+        toValue: 0,
+        duration: 250,
+        useNativeDriver: false,
+      })
+    ]).start(() => {
+      setIsMenuOpen(false);
+    });
+  };
 
   // Save conversation function (now instant)
   const handleSaveConversation = async () => {
@@ -194,7 +226,7 @@ const LilibetApp = () => {
     setMessages(prev => [...prev, userMessage]);
     setInputMessage('');
     setIsLoading(true);
-    setHasUnsavedChanges(true); // Mark as unsaved when new message added
+    setHasUnsavedChanges(true);
 
     try {
       const tutorResponse = await getTutorResponse(inputMessage, currentSubject);
@@ -273,6 +305,29 @@ const LilibetApp = () => {
     setHasUnsavedChanges(false);
   };
 
+  // Menu item press handler
+  const handleMenuItemPress = (action) => {
+    closeMenu();
+    
+    switch (action) {
+      case 'history':
+        setShowHistory(true);
+        break;
+      case 'newSession':
+        setCurrentSubject('');
+        setMessages([]);
+        setCurrentConversationId(null);
+        setHasUnsavedChanges(false);
+        break;
+      case 'profile':
+        Alert.alert('Profile', `Logged in as: ${auth.user?.displayName}\nEmail: ${auth.user?.email}`);
+        break;
+      case 'logout':
+        handleLogout();
+        break;
+    }
+  };
+
   // Logout function
   const handleLogout = () => {
     Alert.alert(
@@ -298,8 +353,8 @@ const LilibetApp = () => {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.header}>
-          <TouchableOpacity style={styles.menuButton} onPress={handleLogout}>
-            <Ionicons name="log-out" size={24} color="#1f2937" />
+          <TouchableOpacity style={styles.menuButton} onPress={openMenu}>
+            <Ionicons name="menu" size={24} color="#1f2937" />
           </TouchableOpacity>
           <View style={styles.headerContent}>
             <Text style={styles.welcomeText}>Welcome back, {auth.user?.displayName}!</Text>
@@ -332,6 +387,78 @@ const LilibetApp = () => {
           ))}
         </ScrollView>
 
+        {/* Hamburger Menu */}
+        {isMenuOpen && (
+          <>
+            <Animated.View 
+              style={[styles.overlay, { opacity: overlayOpacity }]}
+            >
+              <TouchableOpacity 
+                style={styles.overlayTouchable}
+                onPress={closeMenu}
+                activeOpacity={1}
+              />
+            </Animated.View>
+            
+            <Animated.View 
+              style={[styles.sideMenu, { transform: [{ translateX: slideAnim }] }]}
+            >
+              <View style={styles.menuHeader}>
+                <View style={styles.userInfo}>
+                  <View style={styles.userAvatar}>
+                    <Text style={styles.userInitial}>
+                      {auth.user?.displayName?.charAt(0).toUpperCase() || 'U'}
+                    </Text>
+                  </View>
+                  <View>
+                    <Text style={styles.userName}>{auth.user?.displayName}</Text>
+                    <Text style={styles.userEmail}>{auth.user?.email}</Text>
+                  </View>
+                </View>
+                <TouchableOpacity onPress={closeMenu} style={styles.closeMenuButton}>
+                  <Ionicons name="close" size={24} color="#6b7280" />
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.menuItems}>
+                <TouchableOpacity 
+                  style={styles.menuItem}
+                  onPress={() => handleMenuItemPress('newSession')}
+                >
+                  <Ionicons name="add-circle-outline" size={24} color="#3b82f6" />
+                  <Text style={styles.menuItemText}>New Session</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity 
+                  style={styles.menuItem}
+                  onPress={() => handleMenuItemPress('history')}
+                >
+                  <Ionicons name="time-outline" size={24} color="#10b981" />
+                  <Text style={styles.menuItemText}>Conversation History</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity 
+                  style={styles.menuItem}
+                  onPress={() => handleMenuItemPress('profile')}
+                >
+                  <Ionicons name="person-outline" size={24} color="#8b5cf6" />
+                  <Text style={styles.menuItemText}>Profile</Text>
+                </TouchableOpacity>
+
+                <View style={styles.menuDivider} />
+
+                <TouchableOpacity 
+                  style={styles.menuItem}
+                  onPress={() => handleMenuItemPress('logout')}
+                >
+                  <Ionicons name="log-out-outline" size={24} color="#ef4444" />
+                  <Text style={[styles.menuItemText, { color: '#ef4444' }]}>Sign Out</Text>
+                </TouchableOpacity>
+              </View>
+            </Animated.View>
+          </>
+        )}
+
         {/* Conversation History Modal */}
         <Modal
           visible={showHistory}
@@ -355,9 +482,9 @@ const LilibetApp = () => {
         <View style={styles.headerLeft}>
           <TouchableOpacity 
             style={styles.hamburgerButton} 
-            onPress={() => setCurrentSubject('')}
+            onPress={openMenu}
           >
-            <Ionicons name="arrow-back" size={20} color="#1f2937" />
+            <Ionicons name="menu" size={20} color="#1f2937" />
           </TouchableOpacity>
           <View style={[styles.iconContainer, { backgroundColor: subjects.find(s => s.id === currentSubject)?.color }]}>
             <Ionicons 
@@ -377,7 +504,6 @@ const LilibetApp = () => {
         </View>
 
         <View style={styles.headerRight}>
-          {/* Save Button */}
           {hasUnsavedChanges && (
             <TouchableOpacity
               style={styles.saveButton}
@@ -387,7 +513,6 @@ const LilibetApp = () => {
             </TouchableOpacity>
           )}
           
-          {/* Voice Toggle */}
           <TouchableOpacity
             style={[styles.voiceButton, isMuted ? styles.voiceMuted : styles.voiceOn]}
             onPress={toggleMute}
@@ -458,6 +583,90 @@ const LilibetApp = () => {
           <Ionicons name="send" size={20} color="white" />
         </TouchableOpacity>
       </View>
+
+      {/* Chat Hamburger Menu */}
+      {isMenuOpen && (
+        <>
+          <Animated.View 
+            style={[styles.overlay, { opacity: overlayOpacity }]}
+          >
+            <TouchableOpacity 
+              style={styles.overlayTouchable}
+              onPress={closeMenu}
+              activeOpacity={1}
+            />
+          </Animated.View>
+          
+          <Animated.View 
+            style={[styles.sideMenu, { transform: [{ translateX: slideAnim }] }]}
+          >
+            <View style={styles.menuHeader}>
+              <View style={styles.userInfo}>
+                <View style={styles.userAvatar}>
+                  <Text style={styles.userInitial}>
+                    {auth.user?.displayName?.charAt(0).toUpperCase() || 'U'}
+                  </Text>
+                </View>
+                <View>
+                  <Text style={styles.userName}>{auth.user?.displayName}</Text>
+                  <Text style={styles.userEmail}>{auth.user?.email}</Text>
+                </View>
+              </View>
+              <TouchableOpacity onPress={closeMenu} style={styles.closeMenuButton}>
+                <Ionicons name="close" size={24} color="#6b7280" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.menuItems}>
+              <TouchableOpacity 
+                style={styles.menuItem}
+                onPress={() => handleMenuItemPress('newSession')}
+              >
+                <Ionicons name="add-circle-outline" size={24} color="#3b82f6" />
+                <Text style={styles.menuItemText}>New Session</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity 
+                style={styles.menuItem}
+                onPress={() => handleMenuItemPress('history')}
+              >
+                <Ionicons name="time-outline" size={24} color="#10b981" />
+                <Text style={styles.menuItemText}>Conversation History</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity 
+                style={styles.menuItem}
+                onPress={() => handleMenuItemPress('profile')}
+              >
+                <Ionicons name="person-outline" size={24} color="#8b5cf6" />
+                <Text style={styles.menuItemText}>Profile</Text>
+              </TouchableOpacity>
+
+              <View style={styles.menuDivider} />
+
+              <TouchableOpacity 
+                style={styles.menuItem}
+                onPress={() => handleMenuItemPress('logout')}
+              >
+                <Ionicons name="log-out-outline" size={24} color="#ef4444" />
+                <Text style={[styles.menuItemText, { color: '#ef4444' }]}>Sign Out</Text>
+              </TouchableOpacity>
+            </View>
+          </Animated.View>
+        </>
+      )}
+
+      {/* Conversation History Modal */}
+      <Modal
+        visible={showHistory}
+        animationType="slide"
+        presentationStyle="fullScreen"
+      >
+        <ConversationHistory
+          onSelectConversation={resumeConversation}
+          onClose={() => setShowHistory(false)}
+        />
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -665,5 +874,97 @@ const styles = StyleSheet.create({
     height: 40,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  
+  // Hamburger Menu Styles
+  overlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: '#000000',
+    zIndex: 1000,
+  },
+  overlayTouchable: {
+    flex: 1,
+  },
+  sideMenu: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    bottom: 0,
+    width: screenWidth * 0.8,
+    backgroundColor: 'white',
+    zIndex: 1001,
+    shadowColor: '#000',
+    shadowOffset: { width: 2, height: 0 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  menuHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 24,
+    paddingTop: Platform.OS === 'ios' ? 60 : 40,
+    backgroundColor: '#f8fafc',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e7eb',
+  },
+  userInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  userAvatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#3b82f6',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  userInitial: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: 'white',
+  },
+  userName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1f2937',
+  },
+  userEmail: {
+    fontSize: 14,
+    color: '#6b7280',
+    marginTop: 2,
+  },
+  closeMenuButton: {
+    padding: 4,
+  },
+  menuItems: {
+    flex: 1,
+    paddingTop: 20,
+  },
+  menuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    paddingVertical: 16,
+  },
+  menuItemText: {
+    fontSize: 16,
+    color: '#1f2937',
+    marginLeft: 16,
+    fontWeight: '500',
+  },
+  menuDivider: {
+    height: 1,
+    backgroundColor: '#e5e7eb',
+    marginVertical: 12,
+    marginHorizontal: 24,
   },
 });
