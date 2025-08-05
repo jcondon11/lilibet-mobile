@@ -1,3 +1,4 @@
+// App.js - Simple Fixed Version
 import React, { useState, useRef, useEffect } from 'react';
 import { 
   View, 
@@ -16,41 +17,39 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { Audio } from 'expo-av';
 
-// Import our platform-specific utilities
+// Import authentication
+import { AuthProvider, useAuth } from './AuthContext';
+import { AuthScreen } from './AuthScreen';
+
+// Import existing utilities
 import { createRecording } from './utils/audioRecording';
 import { speakMessage, stopSpeaking } from './utils/speechSynthesis';
 
 const { height: screenHeight, width: screenWidth } = Dimensions.get('window');
 const isWeb = Platform.OS === 'web';
 
-// PRODUCTION: Smart server URL detection
-const getServerUrl = () => {
-  if (__DEV__) {
-    // Development mode
-    return isWeb ? 'http://localhost:3001' : 'http://192.168.86.58:3001';
-  } else {
-    // Production mode
-    return 'https://lilibet-backend-production.up.railway.app';
-  }
-};
-
-export default function App() {
+// Main App Component (without hooks complexity)
+const LilibetApp = () => {
+  const auth = useAuth();
+  
+  // All your existing state variables
   const [currentSubject, setCurrentSubject] = useState('');
   const [messages, setMessages] = useState([]);
   const [inputMessage, setInputMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [isMuted, setIsMuted] = useState(true); // Voice OFF by default
+  const [isMuted, setIsMuted] = useState(true);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [recording, setRecording] = useState(null);
   const [isTranscribing, setIsTranscribing] = useState(false);
-  const [typingText, setTypingText] = useState(''); // For typing animation
+  const [typingText, setTypingText] = useState('');
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [selectedModel, setSelectedModel] = useState('openai'); // NEW: AI model selection
-  const [availableModels, setAvailableModels] = useState({}); // NEW: Available models from server
-  const scrollViewRef = useRef(null);
+  const [selectedModel, setSelectedModel] = useState('openai');
+  const [availableModels, setAvailableModels] = useState({});
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [currentConversationId, setCurrentConversationId] = useState(null);
   
-  // Animation values
+  const scrollViewRef = useRef(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const recordingScale = useRef(new Animated.Value(1)).current;
   const slideAnim = useRef(new Animated.Value(-screenWidth * 0.75)).current;
@@ -62,7 +61,6 @@ export default function App() {
     { id: 'science', name: 'Science', icon: 'flask', color: '#ef4444' }
   ];
 
-  // NEW: AI Model configurations
   const modelConfigs = {
     openai: {
       name: 'OpenAI',
@@ -78,149 +76,151 @@ export default function App() {
     }
   };
 
-  const scrollToBottom = () => {
-    setTimeout(() => {
-      scrollViewRef.current?.scrollToEnd({ animated: true });
-    }, 100);
-  };
-
+  // Auto-save conversation after every complete message exchange
   useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
+    if (messages.length > 0 && currentSubject && auth.isAuthenticated) {
+      // Save immediately after each message exchange (user + tutor response)
+      const lastMessage = messages[messages.length - 1];
+      if (lastMessage && lastMessage.sender === 'tutor') {
+        // Only save when tutor has responded (complete exchange)
+        handleSaveConversation();
+      } else {
+        // Mark as unsaved when user sends a message
+        setHasUnsavedChanges(true);
+      }
+    }
+  }, [messages, currentSubject]);
 
-  // NEW: Fetch available models on app start
-  useEffect(() => {
-    fetchAvailableModels();
-  }, []);
+  // Save conversation function (now instant)
+  const handleSaveConversation = async () => {
+    if (!auth.isAuthenticated || !currentSubject || messages.length === 0) return;
 
-  // NEW: Fetch available models from server
-  const fetchAvailableModels = async () => {
     try {
-      const serverUrl = getServerUrl();
-      const response = await fetch(`${serverUrl}/api/models`);
-      
-      if (response.ok) {
-        const data = await response.json();
-        setAvailableModels(data.models);
-        
-        // Set default model to first available one
-        const firstAvailable = Object.keys(data.models).find(key => data.models[key].available);
-        if (firstAvailable && !data.models[selectedModel]?.available) {
-          setSelectedModel(firstAvailable);
-        }
+      const result = await auth.saveConversation(
+        currentSubject,
+        messages,
+        'middle',
+        selectedModel,
+        `${currentSubject} session - ${new Date().toLocaleDateString()}`
+      );
+
+      if (result.success) {
+        setHasUnsavedChanges(false);
+        setCurrentConversationId(result.conversationId);
+        console.log('💾 Conversation saved instantly');
       }
     } catch (error) {
-      console.log('Could not fetch model availability:', error);
-      // Set default fallback
-      setAvailableModels({
-        openai: { available: true, name: 'OpenAI GPT-4o-mini', description: 'Advanced AI with broad knowledge' }
+      console.log('Save failed:', error);
+    }
+  };
+
+  // Show loading screen
+  if (auth.isLoading) {
+    return (
+      <SafeAreaView style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+        <Text style={styles.loadingText}>Loading Lilibet...</Text>
+      </SafeAreaView>
+    );
+  }
+
+  // Show login screen if not authenticated
+  if (!auth.isAuthenticated) {
+    return <AuthScreen />;
+  }
+
+  // Get server URL
+  const getServerUrl = () => {
+    if (__DEV__) {
+      return isWeb ? 'http://localhost:3001' : 'http://192.168.86.58:3001';
+    } else {
+      return 'https://lilibet-backend-production.up.railway.app';
+    }
+  };
+
+  // Get tutor response
+  const getTutorResponse = async (userMessage, subject) => {
+    try {
+      const serverUrl = getServerUrl();
+      
+      const headers = {
+        'Content-Type': 'application/json',
+      };
+
+      if (auth.token) {
+        headers['Authorization'] = `Bearer ${auth.token}`;
+      }
+      
+      const response = await fetch(`${serverUrl}/api/tutor`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          message: userMessage,
+          subject: subject,
+          model: selectedModel,
+          conversationHistory: messages
+            .filter(msg => msg.sender !== 'system')
+            .map(msg => ({
+              role: msg.sender === 'user' ? 'user' : 'assistant',
+              content: msg.text
+            }))
+        })
       });
+
+      if (!response.ok) {
+        throw new Error('Failed to get tutor response');
+      }
+
+      const data = await response.json();
+      return data.response;
+    } catch (error) {
+      console.error('Error calling backend:', error);
+      return "That's a great question! What do you think?";
     }
   };
 
-  // Menu animation effect
-  useEffect(() => {
-    if (isMenuOpen) {
-      Animated.timing(slideAnim, {
-        toValue: 0,
-        duration: 300,
-        useNativeDriver: true,
-      }).start();
-    } else {
-      Animated.timing(slideAnim, {
-        toValue: -screenWidth * 0.75,
-        duration: 300,
-        useNativeDriver: true,
-      }).start();
-    }
-  }, [isMenuOpen]);
+  // Handle message submission
+  const handleSubmit = async () => {
+    if (!inputMessage.trim() || !currentSubject || isLoading) return;
 
-  // Pulse animation for recording
-  useEffect(() => {
-    if (isRecording) {
-      const pulse = Animated.loop(
-        Animated.sequence([
-          Animated.timing(pulseAnim, {
-            toValue: 1.3,
-            duration: 800,
-            useNativeDriver: true,
-          }),
-          Animated.timing(pulseAnim, {
-            toValue: 1,
-            duration: 800,
-            useNativeDriver: true,
-          }),
-        ])
-      );
-      pulse.start();
-      
-      // Scale animation for recording button
-      Animated.timing(recordingScale, {
-        toValue: 1.1,
-        duration: 200,
-        useNativeDriver: true,
-      }).start();
-      
-      return () => {
-        pulse.stop();
+    const userMessage = {
+      id: Date.now(),
+      text: inputMessage,
+      sender: 'user',
+      timestamp: new Date().toLocaleTimeString()
+    };
+
+    setMessages(prev => [...prev, userMessage]);
+    setInputMessage('');
+    setIsLoading(true);
+    setHasUnsavedChanges(true); // Mark as unsaved when new message added
+
+    try {
+      const tutorResponse = await getTutorResponse(inputMessage, currentSubject);
+      const tutorMessage = {
+        id: Date.now() + 1,
+        text: tutorResponse,
+        sender: 'tutor',
+        timestamp: new Date().toLocaleTimeString()
       };
-    } else {
-      pulseAnim.setValue(1);
-      Animated.timing(recordingScale, {
-        toValue: 1,
-        duration: 200,
-        useNativeDriver: true,
-      }).start();
-    }
-  }, [isRecording]);
-
-  // Typing animation effect
-  useEffect(() => {
-    if (isTranscribing) {
-      setTypingText('');
-      const messages = [
-        'Transcribing your speech...',
-        'Converting to text...',
-        'Almost ready...'
-      ];
+      setMessages(prev => [...prev, tutorMessage]);
       
-      let messageIndex = 0;
-      let charIndex = 0;
-      
-      const typeInterval = setInterval(() => {
-        if (messageIndex < messages.length) {
-          const currentMessage = messages[messageIndex];
-          if (charIndex < currentMessage.length) {
-            setTypingText(currentMessage.substring(0, charIndex + 1));
-            charIndex++;
-          } else {
-            setTimeout(() => {
-              messageIndex++;
-              charIndex = 0;
-              if (messageIndex >= messages.length) {
-                setTypingText('Processing...');
-              }
-            }, 1000);
-          }
-        }
-      }, 50);
-      
-      return () => {
-        clearInterval(typeInterval);
-        setTypingText('');
+      if (!isMuted) {
+        setTimeout(() => handleSpeakMessage(tutorResponse), 500);
+      }
+    } catch (error) {
+      const errorMessage = {
+        id: Date.now() + 1,
+        text: "Could you try asking me again?",
+        sender: 'tutor',
+        timestamp: new Date().toLocaleTimeString()
       };
+      setMessages(prev => [...prev, errorMessage]);
+    } finally {
+      setIsLoading(false);
     }
-  }, [isTranscribing]);
-
-  const toggleMenu = () => {
-    setIsMenuOpen(!isMenuOpen);
   };
 
-  const closeMenu = () => {
-    setIsMenuOpen(false);
-  };
-
-  // UPDATED: Platform-specific speech function
+  // Speech function
   const handleSpeakMessage = async (text) => {
     if (isMuted) return;
     
@@ -239,618 +239,126 @@ export default function App() {
 
   const toggleMute = async () => {
     if (!isMuted) {
-      // If muting, stop any current speech
       await stopSpeaking();
       setIsSpeaking(false);
     }
     setIsMuted(!isMuted);
   };
 
-  // NEW: Model selector function
-  const selectModel = (modelKey) => {
-    if (availableModels[modelKey]?.available) {
-      setSelectedModel(modelKey);
-      setIsMenuOpen(false);
-      
-      // Add a message to show model switch
-      const switchMessage = {
-        id: Date.now(),
-        text: `Switched to ${modelConfigs[modelKey].name}! ${modelConfigs[modelKey].description}`,
-        sender: 'system',
-        timestamp: new Date().toLocaleTimeString()
-      };
-      
-      if (messages.length > 0) {
-        setMessages(prev => [...prev, switchMessage]);
-      }
-    }
-  };
-
-  const handleMicrophonePress = async () => {
-    if (isTranscribing) {
-      return;
-    }
+  // Select subject
+  const selectSubject = (subjectId) => {
+    setCurrentSubject(subjectId);
     
-    if (isRecording) {
-      await stopRecording();
-    } else {
-      await startRecording();
-    }
-  };
-
-  // UPDATED: Platform-specific recording with better web error handling
-  const startRecording = async () => {
-    try {
-      console.log('=== Starting Recording Process ===');
-      console.log('Platform:', Platform.OS);
-      
-      setInputMessage('');
-      setTypingText('');
-      
-      // Platform-specific permission handling
-      if (!isWeb) {
-        const { status } = await Audio.requestPermissionsAsync();
-        if (status !== 'granted') {
-          Alert.alert(
-            'Microphone Access Needed', 
-            'Please allow microphone access so I can hear your questions',
-            [{ text: 'OK' }]
-          );
-          return;
-        }
-      } else {
-        // For web, check if mediaDevices is available
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-          Alert.alert('Browser Error', 'Your browser does not support microphone recording. Please use Chrome, Firefox, or Edge.');
-          return;
-        }
-      }
-
-      console.log('Creating recording...');
-      
-      // Use our platform-specific recording function
-      const { recording } = await createRecording();
-      
-      setRecording(recording);
-      setIsRecording(true);
-      console.log('✅ Recording started successfully');
-      
-    } catch (err) {
-      console.error('❌ Failed to start recording:', err);
-      if (isWeb) {
-        if (err.name === 'NotAllowedError') {
-          Alert.alert('Microphone Permission', 'Please allow microphone access in your browser settings and try again.');
-        } else if (err.name === 'NotFoundError') {
-          Alert.alert('No Microphone', 'No microphone found. Please connect a microphone and try again.');
-        } else {
-          Alert.alert('Recording Error', `Could not access microphone: ${err.message}`);
-        }
-      } else {
-        Alert.alert('Recording Error', 'Could not start recording. Please try again.');
-      }
-    }
-  };
-
-  const stopRecording = async () => {
-    try {
-      console.log('=== Stopping Recording ===');
-      setIsRecording(false);
-      setIsTranscribing(true);
-      
-      if (!recording) {
-        console.error('No recording object found');
-        setIsTranscribing(false);
-        return;
-      }
-      
-      await recording.stopAndUnloadAsync();
-      
-      // Reset audio mode for mobile
-      if (!isWeb) {
-        await Audio.setAudioModeAsync({
-          allowsRecordingIOS: false,
-          shouldDuckAndroid: false,
-        });
-      }
-      
-      const uri = recording.getURI();
-      console.log('✅ Recording stopped, URI:', uri);
-      setRecording(null);
-      
-      if (uri) {
-        await transcribeAudio(uri);
-      } else {
-        console.error('No recording URI found');
-        setIsTranscribing(false);
-        Alert.alert('Recording Error', 'No audio was recorded. Please try again.');
-      }
-      
-    } catch (error) {
-      console.error('❌ Error stopping recording:', error);
-      setIsTranscribing(false);
-      Alert.alert('Processing Error', 'Could not process recording. Please try again.');
-    }
-  };
-
-  // UPDATED: Platform-specific transcription with FIXED web FormData
-  const transcribeAudio = async (audioUri) => {
-    try {
-      console.log('=== Starting Transcription ===');
-      
-      // Create form data - different for web vs mobile
-      const formData = new FormData();
-      
-      if (isWeb) {
-        // Web: Get the File object from our WebAudioRecording
-        const audioFile = recording.getFile();
-        if (audioFile) {
-          formData.append('audio', audioFile, 'recording.webm');
-          console.log('Web: Appended file to FormData:', audioFile.name, audioFile.size);
-        } else {
-          throw new Error('No audio file available');
-        }
-      } else {
-        // Mobile: Use the URI
-        formData.append('audio', {
-          uri: audioUri,
-          type: 'audio/m4a',
-          name: 'recording.m4a',
-        });
-      }
-
-      console.log('Sending audio to server...');
-      
-      // PRODUCTION: Use dynamic server URL
-      const serverUrl = getServerUrl();
-      console.log('Using server URL:', serverUrl);
-      
-      // FIXED: Don't set Content-Type header for FormData on web - let browser set it
-      const fetchOptions = {
-        method: 'POST',
-        body: formData,
-      };
-      
-      // Only set Content-Type for mobile
-      if (!isWeb) {
-        fetchOptions.headers = {
-          'Content-Type': 'multipart/form-data',
-        };
-      }
-      
-      const response = await fetch(`${serverUrl}/api/speech-to-text`, fetchOptions);
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('Server error:', errorText);
-        throw new Error(`Server error: ${response.status}`);
-      }
-      
-      const data = await response.json();
-      console.log('Transcription response:', data);
-      
-      if (data.success && data.text && data.text.trim()) {
-        const transcribedText = data.text.trim();
-        console.log('✅ Transcription successful:', transcribedText);
-        
-        setTypingText('Got it! You said: ');
-        setTimeout(() => {
-          setInputMessage(transcribedText);
-          setTypingText('');
-        }, 500);
-        
-      } else {
-        console.log('⚠️ Empty or failed transcription');
-        setTypingText('');
-        Alert.alert(
-          'Didn\'t catch that', 
-          'I couldn\'t hear you clearly. Try speaking a bit louder and closer to your device.',
-          [{ text: 'Try Again' }]
-        );
-      }
-      
-    } catch (error) {
-      console.error('❌ Transcription error:', error);
-      setTypingText('');
-      Alert.alert(
-        'Voice Recognition Error', 
-        'Something went wrong with voice recognition. Please try again.',
-        [{ text: 'OK' }]
-      );
-    } finally {
-      setIsTranscribing(false);
-    }
-  };
-
-  // UPDATED: Get tutor response with model selection
-  const getTutorResponse = async (userMessage, subject) => {
-    try {
-      // PRODUCTION: Use dynamic server URL
-      const serverUrl = getServerUrl();
-      
-      const response = await fetch(`${serverUrl}/api/tutor`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          message: userMessage,
-          subject: subject,
-          model: selectedModel, // NEW: Include selected model
-          conversationHistory: messages
-            .filter(msg => msg.sender !== 'system') // Exclude system messages
-            .map(msg => ({
-              role: msg.sender === 'user' ? 'user' : 'assistant',
-              content: msg.text
-            }))
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to get tutor response');
-      }
-
-      const data = await response.json();
-      return data.response;
-    } catch (error) {
-      console.error('Error calling backend:', error);
-      const fallbackResponses = {
-        math: "What do you think the first step should be?",
-        reading: "What clues in the text helped you think that?",
-        writing: "What feeling are you trying to share?",
-        science: "What do you think might happen if we changed one thing?"
-      };
-      return fallbackResponses[subject] || "That's a great question! What do you think?";
-    }
-  };
-
-  const handleSubmit = async () => {
-    if (!inputMessage.trim() || !currentSubject || isLoading) return;
-
-    const userMessage = {
-      id: Date.now(),
-      text: inputMessage,
-      sender: 'user',
-      timestamp: new Date().toLocaleTimeString()
-    };
-
-    setMessages(prev => [...prev, userMessage]);
-    setInputMessage('');
-    setIsLoading(true);
-
-    try {
-      const tutorResponse = await getTutorResponse(inputMessage, currentSubject);
-      const tutorMessage = {
-        id: Date.now() + 1,
-        text: tutorResponse,
-        sender: 'tutor',
-        timestamp: new Date().toLocaleTimeString()
-      };
-      setMessages(prev => [...prev, tutorMessage]);
-      
-      // Speak the response if voice is enabled
-      if (!isMuted) {
-        setTimeout(() => handleSpeakMessage(tutorResponse), 500);
-      }
-    } catch (error) {
-      const errorMessage = {
-        id: Date.now() + 1,
-        text: "Could you try asking me again?",
-        sender: 'tutor',
-        timestamp: new Date().toLocaleTimeString()
-      };
-      setMessages(prev => [...prev, errorMessage]);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const selectSubject = (subject) => {
-    setCurrentSubject(subject.id);
+    const subject = subjects.find(s => s.id === subjectId);
     const welcomeMessage = {
       id: Date.now(),
-      text: `Hi! I'm Lilibet, your tutor! I'm here to help you learn ${subject.name} by asking questions. What would you like to work on?`,
+      text: `Hello ${auth.user?.displayName || 'there'}! I'm Lilibet, your ${subject.name.toLowerCase()} tutor. What would you like to explore today?`,
       sender: 'tutor',
       timestamp: new Date().toLocaleTimeString()
     };
+    
     setMessages([welcomeMessage]);
-    
-    setIsMenuOpen(false);
-    
-    // Speak welcome message if voice is enabled
-    if (!isMuted) {
-      setTimeout(() => handleSpeakMessage(welcomeMessage.text), 500);
-    }
+    setCurrentConversationId(null);
+    setHasUnsavedChanges(false);
   };
 
-  const goHome = async () => {
-    setCurrentSubject('');
-    setMessages([]);
-    setInputMessage('');
-    setTypingText('');
-    setIsMenuOpen(false);
-    
-    // Stop any current speech
-    await stopSpeaking();
-    setIsSpeaking(false);
-    
-    // Stop any recording
-    if (isRecording && recording) {
-      await recording.stopAndUnloadAsync();
-      setIsRecording(false);
-      setRecording(null);
-    }
-    setIsTranscribing(false);
+  // Logout function
+  const handleLogout = () => {
+    Alert.alert(
+      'Sign Out',
+      'Are you sure? Any unsaved progress will be lost.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Sign Out', 
+          style: 'destructive',
+          onPress: async () => {
+            await auth.logout();
+            setCurrentSubject('');
+            setMessages([]);
+          }
+        }
+      ]
+    );
   };
 
-  // Simple Navigation Menu Component - no complex responsive layout
-  const NavigationMenu = () => (
-    <Modal
-      visible={isMenuOpen}
-      transparent={true}
-      animationType="none"
-      onRequestClose={closeMenu}
-    >
-      <TouchableOpacity 
-        style={styles.modalOverlay} 
-        activeOpacity={1} 
-        onPress={closeMenu}
-      >
-        <Animated.View 
-          style={[
-            styles.menuContainer,
-            { transform: [{ translateX: slideAnim }] }
-          ]}
-        >
-          <TouchableOpacity activeOpacity={1}>
-            <View style={styles.menuHeader}>
-              <Text style={styles.menuTitle}>🌟 Navigation</Text>
-              <TouchableOpacity onPress={closeMenu} style={styles.closeButton}>
-                <Ionicons name="close" size={24} color="#6b7280" />
-              </TouchableOpacity>
-            </View>
-
-            {/* Platform Detection Display */}
-            <View style={styles.menuItem}>
-              <Text style={styles.menuItemText}>
-                Platform: {Platform.OS} {Platform.OS === 'web' ? '🌐' : '📱'}
-              </Text>
-            </View>
-
-            {/* Environment Display */}
-            <View style={styles.menuItem}>
-              <Text style={styles.menuItemText}>
-                Mode: {__DEV__ ? 'Development 🛠️' : 'Production 🚀'}
-              </Text>
-            </View>
-
-            {/* Server URL Display */}
-            <View style={styles.menuItem}>
-              <Text style={[styles.menuItemText, { fontSize: 12 }]}>
-                Server: {getServerUrl()}
-              </Text>
-            </View>
-
-            <TouchableOpacity style={styles.menuItem} onPress={goHome}>
-              <View style={[styles.menuIconContainer, { backgroundColor: '#6b21a8' }]}>
-                <Ionicons name="home" size={20} color="white" />
-              </View>
-              <Text style={styles.menuItemText}>Home</Text>
-            </TouchableOpacity>
-
-            <View style={styles.menuDivider} />
-
-            {/* NEW: AI Model Selection */}
-            <Text style={styles.menuSectionTitle}>AI Model</Text>
-            {Object.keys(modelConfigs).map((modelKey) => {
-              const model = modelConfigs[modelKey];
-              const isAvailable = availableModels[modelKey]?.available;
-              const isSelected = selectedModel === modelKey;
-              
-              return (
-                <TouchableOpacity
-                  key={modelKey}
-                  style={[
-                    styles.menuItem,
-                    isSelected && styles.menuItemActive,
-                    !isAvailable && styles.menuItemDisabled
-                  ]}
-                  onPress={() => selectModel(modelKey)}
-                  disabled={!isAvailable}
-                >
-                  <View style={[
-                    styles.menuIconContainer, 
-                    { backgroundColor: isAvailable ? model.color : '#9ca3af' }
-                  ]}>
-                    <Ionicons name={model.icon} size={20} color="white" />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={[
-                      styles.menuItemText,
-                      isSelected && styles.menuItemTextActive,
-                      !isAvailable && styles.menuItemTextDisabled
-                    ]}>
-                      {model.name}
-                    </Text>
-                    <Text style={[
-                      styles.menuItemSubtext,
-                      !isAvailable && styles.menuItemTextDisabled
-                    ]}>
-                      {isAvailable ? model.description : 'Not available'}
-                    </Text>
-                  </View>
-                  {isSelected && isAvailable && (
-                    <Ionicons name="checkmark-circle" size={20} color={model.color} />
-                  )}
-                  {!isAvailable && (
-                    <Ionicons name="close-circle" size={20} color="#9ca3af" />
-                  )}
-                </TouchableOpacity>
-              );
-            })}
-
-            <View style={styles.menuDivider} />
-
-            <Text style={styles.menuSectionTitle}>Subjects</Text>
-            {subjects.map((subject) => (
-              <TouchableOpacity
-                key={subject.id}
-                style={[
-                  styles.menuItem,
-                  currentSubject === subject.id && styles.menuItemActive
-                ]}
-                onPress={() => selectSubject(subject)}
-              >
-                <View style={[styles.menuIconContainer, { backgroundColor: subject.color }]}>
-                  <Ionicons name={subject.icon} size={20} color="white" />
-                </View>
-                <Text style={[
-                  styles.menuItemText,
-                  currentSubject === subject.id && styles.menuItemTextActive
-                ]}>
-                  {subject.name}
-                </Text>
-                {currentSubject === subject.id && (
-                  <Ionicons name="checkmark-circle" size={20} color={subject.color} />
-                )}
-              </TouchableOpacity>
-            ))}
-
-            <View style={styles.menuDivider} />
-            <TouchableOpacity style={styles.menuItem} onPress={toggleMute}>
-              <View style={[
-                styles.menuIconContainer, 
-                { backgroundColor: isMuted ? '#dc2626' : '#059669' }
-              ]}>
-                <Ionicons 
-                  name={isMuted ? "volume-mute" : "volume-high"} 
-                  size={20} 
-                  color="white" 
-                />
-              </View>
-              <Text style={styles.menuItemText}>
-                Voice {isMuted ? 'Off' : 'On'}
-              </Text>
-            </TouchableOpacity>
-          </TouchableOpacity>
-        </Animated.View>
-      </TouchableOpacity>
-    </Modal>
-  );
-
-  // Home screen - same for all platforms
+  // Subject selection screen
   if (!currentSubject) {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.header}>
-          <Text style={styles.title}>🌟 Lilibet Tutor 🌟</Text>
-          <Text style={styles.subtitle}>Your friendly learning companion!</Text>
-          
-          {/* Platform Detection Display */}
-          <View style={styles.platformInfo}>
-            <Text style={styles.platformText}>
-              Running on: {Platform.OS} {Platform.OS === 'web' ? '🌐' : '📱'}
-            </Text>
-          </View>
-
-          {/* Environment Detection Display */}
-          <View style={[styles.platformInfo, { backgroundColor: __DEV__ ? '#fff3cd' : '#d1ecf1' }]}>
-            <Text style={[styles.platformText, { color: __DEV__ ? '#856404' : '#0c5460' }]}>
-              Mode: {__DEV__ ? 'Development 🛠️' : 'Production 🚀'}
-            </Text>
-          </View>
-
-          {/* NEW: AI Model Display */}
-          <View style={styles.modelSelector}>
-            <Text style={styles.modelSelectorLabel}>AI Model:</Text>
-            <TouchableOpacity
-              style={[
-                styles.modelButton,
-                { backgroundColor: modelConfigs[selectedModel]?.color || '#6b7280' }
-              ]}
-              onPress={toggleMenu}
-            >
-              <Ionicons 
-                name={modelConfigs[selectedModel]?.icon || 'help'} 
-                size={16} 
-                color="white" 
-              />
-              <Text style={styles.modelButtonText}>
-                {modelConfigs[selectedModel]?.name || 'Unknown'}
-              </Text>
-              <Ionicons name="chevron-down" size={16} color="white" />
-            </TouchableOpacity>
-          </View>
-          
-          <TouchableOpacity
-            style={[styles.voiceToggle, isMuted ? styles.voiceMuted : styles.voiceOn]}
-            onPress={toggleMute}
-          >
-            <Ionicons 
-              name={isMuted ? "volume-mute" : "volume-high"} 
-              size={20} 
-              color={isMuted ? "#dc2626" : "#059669"} 
-            />
-            <Text style={[styles.voiceText, isMuted ? styles.mutedText : styles.onText]}>
-              {isMuted ? "Voice Off" : "Voice On"}
-            </Text>
+          <TouchableOpacity style={styles.menuButton} onPress={handleLogout}>
+            <Ionicons name="log-out" size={24} color="#1f2937" />
           </TouchableOpacity>
+          <View style={styles.headerContent}>
+            <Text style={styles.welcomeText}>Welcome back, {auth.user?.displayName}!</Text>
+            <Text style={styles.headerTitle}>Choose Your Subject</Text>
+          </View>
         </View>
-        
-        <View style={styles.grid}>
+
+        <ScrollView contentContainerStyle={styles.subjectsContainer}>
           {subjects.map((subject) => (
             <TouchableOpacity
               key={subject.id}
               style={[styles.subjectButton, { backgroundColor: subject.color }]}
-              onPress={() => selectSubject(subject)}
+              onPress={() => selectSubject(subject.id)}
             >
               <Ionicons name={subject.icon} size={48} color="white" />
               <Text style={styles.subjectText}>{subject.name}</Text>
-              <Text style={styles.subjectSubtext}>Let's learn together!</Text>
+              <Text style={styles.subjectSubtext}>
+                {subject.id === 'math' && 'Numbers, equations, problem solving'}
+                {subject.id === 'reading' && 'Stories, comprehension, analysis'}
+                {subject.id === 'writing' && 'Essays, creativity, expression'}
+                {subject.id === 'science' && 'Experiments, discoveries, nature'}
+              </Text>
             </TouchableOpacity>
           ))}
-        </View>
+        </ScrollView>
       </SafeAreaView>
     );
   }
 
-  const currentSubjectData = subjects.find(s => s.id === currentSubject);
-
-  // Simple chat layout - no complex responsive behavior
+  // Chat interface
   return (
     <SafeAreaView style={styles.container}>
-      {/* Navigation Menu */}
-      <NavigationMenu />
-
       {/* Header */}
       <View style={styles.chatHeader}>
         <View style={styles.headerLeft}>
-          <TouchableOpacity style={styles.hamburgerButton} onPress={toggleMenu}>
-            <Ionicons name="menu" size={20} color="#374151" />
-          </TouchableOpacity>
-          <View style={[styles.iconContainer, { backgroundColor: currentSubjectData.color }]}>
-            <Ionicons name={currentSubjectData.icon} size={20} color="white" />
-          </View>
-          <View>
-            <Text style={styles.headerTitle}>Lilibet Tutor</Text>
-            <Text style={styles.headerSubtitle}>{currentSubjectData.name}</Text>
-          </View>
-        </View>
-        <View style={styles.headerRight}>
-          {/* NEW: Model indicator in header */}
-          <TouchableOpacity
-            style={[
-              styles.modelIndicator,
-              { backgroundColor: modelConfigs[selectedModel]?.color || '#6b7280' }
-            ]}
-            onPress={toggleMenu}
+          <TouchableOpacity 
+            style={styles.hamburgerButton} 
+            onPress={() => setCurrentSubject('')}
           >
+            <Ionicons name="arrow-back" size={20} color="#1f2937" />
+          </TouchableOpacity>
+          <View style={[styles.iconContainer, { backgroundColor: subjects.find(s => s.id === currentSubject)?.color }]}>
             <Ionicons 
-              name={modelConfigs[selectedModel]?.icon || 'help'} 
-              size={14} 
+              name={subjects.find(s => s.id === currentSubject)?.icon} 
+              size={20} 
               color="white" 
             />
-          </TouchableOpacity>
+          </View>
+          <View>
+            <Text style={styles.headerTitle}>
+              {subjects.find(s => s.id === currentSubject)?.name} with Lilibet
+            </Text>
+            <Text style={styles.headerSubtitle}>
+              {auth.user?.displayName} • {hasUnsavedChanges ? 'Unsaved changes' : 'Saved'}
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.headerRight}>
+          {/* Save Button */}
+          {hasUnsavedChanges && (
+            <TouchableOpacity
+              style={styles.saveButton}
+              onPress={handleSaveConversation}
+            >
+              <Ionicons name="save" size={16} color="#3b82f6" />
+            </TouchableOpacity>
+          )}
           
+          {/* Voice Toggle */}
           <TouchableOpacity
             style={[styles.voiceButton, isMuted ? styles.voiceMuted : styles.voiceOn]}
             onPress={toggleMute}
@@ -863,7 +371,7 @@ export default function App() {
           </TouchableOpacity>
         </View>
       </View>
-      
+
       {/* Messages */}
       <ScrollView 
         ref={scrollViewRef}
@@ -876,21 +384,18 @@ export default function App() {
             key={message.id}
             style={[
               styles.messageRow,
-              message.sender === 'user' ? styles.userRow : 
-              message.sender === 'system' ? styles.systemRow : styles.tutorRow
+              message.sender === 'user' ? styles.userRow : styles.tutorRow
             ]}
           >
             <View
               style={[
                 styles.messageBubble,
-                message.sender === 'user' ? styles.userBubble : 
-                message.sender === 'system' ? styles.systemBubble : styles.tutorBubble
+                message.sender === 'user' ? styles.userBubble : styles.tutorBubble
               ]}
             >
               <Text style={[
                 styles.messageText,
-                message.sender === 'user' ? styles.userText : 
-                message.sender === 'system' ? styles.systemText : styles.tutorText
+                message.sender === 'user' ? styles.userText : styles.tutorText
               ]}>
                 {message.text}
               </Text>
@@ -902,87 +407,38 @@ export default function App() {
           <View style={styles.messageRow}>
             <View style={[styles.messageBubble, styles.tutorBubble]}>
               <Text style={styles.tutorText}>
-                {modelConfigs[selectedModel]?.name} is thinking...
+                Lilibet is thinking...
               </Text>
             </View>
           </View>
         )}
       </ScrollView>
-      
+
       {/* Input Bar */}
       <View style={styles.inputBar}>
         <TextInput
           style={styles.input}
           value={inputMessage}
           onChangeText={setInputMessage}
-          placeholder={isTranscribing ? typingText : "Type or speak your question..."}
+          placeholder="Type your question..."
           onSubmitEditing={handleSubmit}
           returnKeyType="send"
-          editable={!isTranscribing}
         />
         
-        <Animated.View style={{ transform: [{ scale: recordingScale }] }}>
-          <TouchableOpacity
-            style={[
-              styles.micButton,
-              isRecording ? styles.micRecording : 
-              isTranscribing ? styles.micTranscribing : 
-              styles.micIdle
-            ]}
-            onPress={handleMicrophonePress}
-            disabled={isTranscribing}
-          >
-            {isRecording && (
-              <Animated.View 
-                style={[
-                  styles.recordingPulse,
-                  { transform: [{ scale: pulseAnim }] }
-                ]}
-              />
-            )}
-            <Ionicons 
-              name={
-                isRecording ? "stop" : 
-                isTranscribing ? "hourglass" : 
-                "mic"
-              } 
-              size={18} 
-              color={
-                isRecording ? "#ffffff" : 
-                isTranscribing ? "#f59e0b" : 
-                "#6b7280"
-              } 
-            />
-          </TouchableOpacity>
-        </Animated.View>
-        
-        <TouchableOpacity
-          style={[
-            styles.sendBtn,
-            (!inputMessage.trim() || isLoading) && styles.sendBtnDisabled
-          ]}
-          onPress={handleSubmit}
-          disabled={!inputMessage.trim() || isLoading}
-        >
-          <Text style={[
-            styles.sendText,
-            (!inputMessage.trim() || isLoading) && styles.sendTextDisabled
-          ]}>
-            Send
-          </Text>
+        <TouchableOpacity style={styles.sendButton} onPress={handleSubmit}>
+          <Ionicons name="send" size={20} color="white" />
         </TouchableOpacity>
       </View>
-      
-      {/* Status indicator for voice processing */}
-      {(isRecording || isTranscribing) && (
-        <View style={styles.statusBar}>
-          <Text style={styles.statusText}>
-            {isRecording ? "🎤 Listening... Tap stop when done" : 
-             isTranscribing ? typingText : ""}
-          </Text>
-        </View>
-      )}
     </SafeAreaView>
+  );
+};
+
+// Main App with AuthProvider wrapper
+export default function App() {
+  return (
+    <AuthProvider>
+      <LilibetApp />
+    </AuthProvider>
   );
 }
 
@@ -991,117 +447,68 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f8fafc',
   },
-  header: {
-    alignItems: 'center',
-    paddingVertical: 40,
-    paddingHorizontal: 20,
-  },
-  title: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    color: '#6b21a8',
-    marginBottom: 8,
-  },
-  subtitle: {
+  loadingText: {
     fontSize: 18,
-    color: '#9333ea',
-    marginBottom: 20,
+    color: '#6b7280',
+    textAlign: 'center',
   },
-  // Platform detection styles
-  platformInfo: {
-    backgroundColor: '#e0e7ff',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-    marginBottom: 10,
-  },
-  platformText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#5b21b6',
-  },
-  // NEW: Model selector styles
-  modelSelector: {
+  header: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 10,
+    padding: 20,
+    backgroundColor: 'white',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e7eb',
   },
-  modelSelectorLabel: {
+  headerContent: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  welcomeText: {
     fontSize: 14,
-    fontWeight: '600',
-    color: '#374151',
-    marginRight: 8,
+    color: '#6b7280',
+    textAlign: 'center',
   },
-  modelButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-    gap: 6,
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#1f2937',
+    textAlign: 'center',
   },
-  modelButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: 'white',
+  menuButton: {
+    padding: 8,
+    borderRadius: 8,
+    backgroundColor: '#f3f4f6',
   },
-  modelIndicator: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    alignItems: 'center',
+  subjectsContainer: {
+    flexGrow: 1,
     justifyContent: 'center',
-    marginRight: 8,
-  },
-  voiceToggle: {
-    flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-    marginTop: 10,
-  },
-  voiceOn: {
-    backgroundColor: '#dcfce7',
-  },
-  voiceMuted: {
-    backgroundColor: '#fee2e2',
-  },
-  voiceText: {
-    fontSize: 14,
-    fontWeight: '500',
-    marginLeft: 6,
-  },
-  onText: {
-    color: '#059669',
-  },
-  mutedText: {
-    color: '#dc2626',
-  },
-  grid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-around',
     paddingHorizontal: 20,
-    gap: 20,
+    paddingVertical: 40,
   },
   subjectButton: {
-    width: '45%',
-    aspectRatio: 1,
-    borderRadius: 16,
+    width: screenWidth - 80,
+    padding: 30,
+    borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 20,
     marginBottom: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
   },
   subjectText: {
-    fontSize: 20,
+    fontSize: 24,
     fontWeight: 'bold',
     color: 'white',
-    marginTop: 12,
+    marginTop: 16,
   },
   subjectSubtext: {
-    fontSize: 12,
+    fontSize: 14,
     color: 'white',
     opacity: 0.9,
     textAlign: 'center',
@@ -1119,6 +526,7 @@ const styles = StyleSheet.create({
   headerLeft: {
     flexDirection: 'row',
     alignItems: 'center',
+    flex: 1,
   },
   headerRight: {
     flexDirection: 'row',
@@ -1130,11 +538,6 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     backgroundColor: '#f3f4f6',
   },
-  voiceButton: {
-    padding: 8,
-    borderRadius: 16,
-    marginRight: 8,
-  },
   iconContainer: {
     width: 32,
     height: 32,
@@ -1143,111 +546,35 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginRight: 10,
   },
-  headerTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#1f2937',
-  },
   headerSubtitle: {
     fontSize: 12,
     color: '#6b7280',
   },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+  voiceButton: {
+    padding: 8,
+    borderRadius: 16,
   },
-  menuContainer: {
-    width: screenWidth * 0.75,
-    height: '100%',
-    backgroundColor: 'white',
-    paddingTop: 50,
-    elevation: 5,
-    shadowColor: '#000',
-    shadowOffset: { width: 2, height: 0 },
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
+  voiceMuted: {
+    backgroundColor: '#fee2e2',
   },
-  menuHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingBottom: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
+  voiceOn: {
+    backgroundColor: '#dcfce7',
   },
-  menuTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#6b21a8',
-  },
-  closeButton: {
-    padding: 4,
-  },
-  menuItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
-  },
-  menuItemActive: {
-    backgroundColor: '#f0f9ff',
-  },
-  menuItemDisabled: {
-    opacity: 0.5,
-  },
-  menuIconContainer: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 16,
-  },
-  menuItemText: {
-    fontSize: 16,
-    color: '#374151',
-    fontWeight: '500',
-    flex: 1,
-  },
-  menuItemTextActive: {
-    color: '#1d4ed8',
-    fontWeight: '600',
-  },
-  menuItemTextDisabled: {
-    color: '#9ca3af',
-  },
-  menuItemSubtext: {
-    fontSize: 12,
-    color: '#6b7280',
-    marginTop: 2,
-  },
-  menuDivider: {
-    height: 1,
-    backgroundColor: '#e5e7eb',
-    marginVertical: 8,
-  },
-  menuSectionTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#6b7280',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
+  saveButton: {
+    padding: 8,
+    borderRadius: 16,
+    marginRight: 8,
+    backgroundColor: '#eff6ff',
   },
   messagesContainer: {
     flex: 1,
-    backgroundColor: '#e0e7ff',
+    backgroundColor: '#f8fafc',
   },
   messagesContent: {
     padding: 16,
-    paddingBottom: 20,
   },
   messageRow: {
-    marginBottom: 8,
+    marginVertical: 4,
   },
   userRow: {
     alignItems: 'flex-end',
@@ -1255,30 +582,22 @@ const styles = StyleSheet.create({
   tutorRow: {
     alignItems: 'flex-start',
   },
-  systemRow: {
-    alignItems: 'center',
-  },
   messageBubble: {
     maxWidth: '80%',
     padding: 12,
-    borderRadius: 12,
+    borderRadius: 16,
   },
   userBubble: {
-    backgroundColor: '#8b5cf6',
+    backgroundColor: '#3b82f6',
   },
   tutorBubble: {
     backgroundColor: 'white',
-    borderLeftWidth: 3,
-    borderLeftColor: '#c4b5fd',
-  },
-  systemBubble: {
-    backgroundColor: '#f0f9ff',
     borderWidth: 1,
-    borderColor: '#bfdbfe',
+    borderColor: '#e5e7eb',
   },
   messageText: {
-    fontSize: 15,
-    lineHeight: 20,
+    fontSize: 16,
+    lineHeight: 22,
   },
   userText: {
     color: 'white',
@@ -1286,16 +605,10 @@ const styles = StyleSheet.create({
   tutorText: {
     color: '#1f2937',
   },
-  systemText: {
-    color: '#1e40af',
-    fontStyle: 'italic',
-    textAlign: 'center',
-  },
   inputBar: {
     flexDirection: 'row',
+    padding: 16,
     backgroundColor: 'white',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
     borderTopWidth: 1,
     borderTopColor: '#e5e7eb',
     alignItems: 'center',
@@ -1306,74 +619,17 @@ const styles = StyleSheet.create({
     borderColor: '#d1d5db',
     borderRadius: 20,
     paddingHorizontal: 16,
-    paddingVertical: 8,
+    paddingVertical: 12,
     fontSize: 16,
     backgroundColor: '#f9fafb',
-    marginRight: 8,
+    marginRight: 12,
   },
-  micButton: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 8,
-    position: 'relative',
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-  },
-  micIdle: {
+  sendButton: {
     backgroundColor: '#3b82f6',
-    borderWidth: 2,
-    borderColor: '#2563eb',
-  },
-  micRecording: {
-    backgroundColor: '#ef4444',
-    borderWidth: 2,
-    borderColor: '#dc2626',
-  },
-  micTranscribing: {
-    backgroundColor: '#f59e0b',
-    borderWidth: 2,
-    borderColor: '#d97706',
-  },
-  recordingPulse: {
-    position: 'absolute',
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: '#ef4444',
-    opacity: 0.3,
-  },
-  sendBtn: {
-    backgroundColor: '#8b5cf6',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
     borderRadius: 20,
-  },
-  sendBtnDisabled: {
-    backgroundColor: '#d1d5db',
-  },
-  sendText: {
-    color: 'white',
-    fontWeight: '600',
-    fontSize: 14,
-  },
-  sendTextDisabled: {
-    color: '#9ca3af',
-  },
-  statusBar: {
-    backgroundColor: '#f3f4f6',
-    paddingVertical: 8,
-    paddingHorizontal: 16,
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
     alignItems: 'center',
-  },
-  statusText: {
-    fontSize: 14,
-    color: '#6b7280',
-    fontStyle: 'italic',
   },
 });
