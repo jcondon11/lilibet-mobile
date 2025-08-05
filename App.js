@@ -1,4 +1,4 @@
-// App.js - Simple Fixed Version
+// App.js - Complete File with Conversation History Access
 import React, { useState, useRef, useEffect } from 'react';
 import { 
   View, 
@@ -20,6 +20,7 @@ import { Audio } from 'expo-av';
 // Import authentication
 import { AuthProvider, useAuth } from './AuthContext';
 import { AuthScreen } from './AuthScreen';
+import { ConversationHistory } from './ConversationHistory';
 
 // Import existing utilities
 import { createRecording } from './utils/audioRecording';
@@ -28,11 +29,11 @@ import { speakMessage, stopSpeaking } from './utils/speechSynthesis';
 const { height: screenHeight, width: screenWidth } = Dimensions.get('window');
 const isWeb = Platform.OS === 'web';
 
-// Main App Component (without hooks complexity)
+// Main App Component
 const LilibetApp = () => {
   const auth = useAuth();
   
-  // All your existing state variables
+  // All state variables
   const [currentSubject, setCurrentSubject] = useState('');
   const [messages, setMessages] = useState([]);
   const [inputMessage, setInputMessage] = useState('');
@@ -48,6 +49,7 @@ const LilibetApp = () => {
   const [availableModels, setAvailableModels] = useState({});
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [currentConversationId, setCurrentConversationId] = useState(null);
+  const [showHistory, setShowHistory] = useState(false);
   
   const scrollViewRef = useRef(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -262,6 +264,15 @@ const LilibetApp = () => {
     setHasUnsavedChanges(false);
   };
 
+  // Resume conversation from history
+  const resumeConversation = (conversation) => {
+    setShowHistory(false);
+    setCurrentSubject(conversation.subject);
+    setMessages(JSON.parse(conversation.messages));
+    setCurrentConversationId(conversation.id);
+    setHasUnsavedChanges(false);
+  };
+
   // Logout function
   const handleLogout = () => {
     Alert.alert(
@@ -294,6 +305,12 @@ const LilibetApp = () => {
             <Text style={styles.welcomeText}>Welcome back, {auth.user?.displayName}!</Text>
             <Text style={styles.headerTitle}>Choose Your Subject</Text>
           </View>
+          <TouchableOpacity 
+            style={styles.historyButton} 
+            onPress={() => setShowHistory(true)}
+          >
+            <Ionicons name="time" size={24} color="#1f2937" />
+          </TouchableOpacity>
         </View>
 
         <ScrollView contentContainerStyle={styles.subjectsContainer}>
@@ -314,6 +331,18 @@ const LilibetApp = () => {
             </TouchableOpacity>
           ))}
         </ScrollView>
+
+        {/* Conversation History Modal */}
+        <Modal
+          visible={showHistory}
+          animationType="slide"
+          presentationStyle="fullScreen"
+        >
+          <ConversationHistory
+            onSelectConversation={resumeConversation}
+            onClose={() => setShowHistory(false)}
+          />
+        </Modal>
       </SafeAreaView>
     );
   }
@@ -481,6 +510,11 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     backgroundColor: '#f3f4f6',
   },
+  historyButton: {
+    padding: 8,
+    borderRadius: 8,
+    backgroundColor: '#f3f4f6',
+  },
   subjectsContainer: {
     flexGrow: 1,
     justifyContent: 'center',
@@ -550,6 +584,12 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#6b7280',
   },
+  saveButton: {
+    padding: 8,
+    borderRadius: 16,
+    marginRight: 8,
+    backgroundColor: '#eff6ff',
+  },
   voiceButton: {
     padding: 8,
     borderRadius: 16,
@@ -559,12 +599,6 @@ const styles = StyleSheet.create({
   },
   voiceOn: {
     backgroundColor: '#dcfce7',
-  },
-  saveButton: {
-    padding: 8,
-    borderRadius: 16,
-    marginRight: 8,
-    backgroundColor: '#eff6ff',
   },
   messagesContainer: {
     flex: 1,
