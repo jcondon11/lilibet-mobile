@@ -1,970 +1,698 @@
-// App.js - Complete File with Fixed Hamburger Menu
-import React, { useState, useRef, useEffect } from 'react';
-import { 
-  View, 
-  Text, 
-  TouchableOpacity, 
-  StyleSheet, 
-  SafeAreaView, 
-  TextInput, 
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
   ScrollView,
-  Dimensions,
+  StyleSheet,
+  ActivityIndicator,
   Alert,
+  Platform,
+  KeyboardAvoidingView,
   Animated,
   Modal,
-  Platform
+  Dimensions,
+  SafeAreaView
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
-import { Audio } from 'expo-av';
-
-// Import authentication
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AuthProvider, useAuth } from './AuthContext';
-import { AuthScreen } from './AuthScreen';
-import { ConversationHistory } from './ConversationHistory';
+import AuthScreen from './AuthScreen';
 
-// Import existing utilities
-import { createRecording } from './utils/audioRecording';
-import { speakMessage, stopSpeaking } from './utils/speechSynthesis';
+const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
-const { height: screenHeight, width: screenWidth } = Dimensions.get('window');
-const isWeb = Platform.OS === 'web';
+const API_URL = 'https://lilibet-backend-production.up.railway.app';
 
-// Main App Component
-const LilibetApp = () => {
-  const auth = useAuth();
-  
-  // All state variables
-  const [currentSubject, setCurrentSubject] = useState('');
+// Learning mode configurations
+const LEARNING_MODES = {
+  discovery: {
+    name: 'Discovery',
+    icon: '🔍',
+    color: '#FF6B6B',
+    description: 'Exploring new concepts'
+  },
+  practice: {
+    name: 'Practice',
+    icon: '✏️',
+    color: '#4ECDC4',
+    description: 'Building skills'
+  },
+  explanation: {
+    name: 'Explanation',
+    icon: '💡',
+    color: '#FFD93D',
+    description: 'Understanding why'
+  },
+  challenge: {
+    name: 'Challenge',
+    icon: '🎯',
+    color: '#A8E6CF',
+    description: 'Testing knowledge'
+  },
+  review: {
+    name: 'Review',
+    icon: '📚',
+    color: '#C7CEEA',
+    description: 'Reinforcing learning'
+  }
+};
+
+// Subject configurations
+const SUBJECTS = {
+  Math: { emoji: '🔢', color: '#FF6B6B' },
+  Science: { emoji: '🔬', color: '#4ECDC4' },
+  Reading: { emoji: '📖', color: '#FFD93D' },
+  Writing: { emoji: '✍️', color: '#A8E6CF' },
+  General: { emoji: '🌟', color: '#C7CEEA' }
+};
+
+// Main Chat Interface Component
+function ChatInterface() {
+  const { user, token, logout } = useAuth();
   const [messages, setMessages] = useState([]);
-  const [inputMessage, setInputMessage] = useState('');
+  const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [isMuted, setIsMuted] = useState(true);
-  const [isSpeaking, setIsSpeaking] = useState(false);
-  const [isRecording, setIsRecording] = useState(false);
-  const [recording, setRecording] = useState(null);
-  const [isTranscribing, setIsTranscribing] = useState(false);
-  const [typingText, setTypingText] = useState('');
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [selectedModel, setSelectedModel] = useState('openai');
-  const [availableModels, setAvailableModels] = useState({});
-  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
-  const [currentConversationId, setCurrentConversationId] = useState(null);
-  const [showHistory, setShowHistory] = useState(false);
+  const [selectedSubject, setSelectedSubject] = useState('General');
+  const [currentLearningMode, setCurrentLearningMode] = useState(null);
+  const [showMenu, setShowMenu] = useState(false);
+  const [learningStreak, setLearningStreak] = useState(0);
+  const [totalPoints, setTotalPoints] = useState(0);
   
-  const scrollViewRef = useRef(null);
-  const pulseAnim = useRef(new Animated.Value(1)).current;
-  const recordingScale = useRef(new Animated.Value(1)).current;
-  const slideAnim = useRef(new Animated.Value(-screenWidth * 0.8)).current;
-  const overlayOpacity = useRef(new Animated.Value(0)).current;
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const scrollViewRef = useRef();
 
-  const subjects = [
-    { id: 'math', name: 'Math', icon: 'calculator', color: '#3b82f6' },
-    { id: 'reading', name: 'Reading', icon: 'book', color: '#10b981' },
-    { id: 'writing', name: 'Writing', icon: 'create', color: '#8b5cf6' },
-    { id: 'science', name: 'Science', icon: 'flask', color: '#ef4444' }
-  ];
-
-  const modelConfigs = {
-    openai: {
-      name: 'OpenAI',
-      icon: 'flash',
-      color: '#10b981',
-      description: 'GPT-4o-mini - Great for broad knowledge'
-    },
-    claude: {
-      name: 'Claude',
-      icon: 'library',
-      color: '#8b5cf6',
-      description: 'Anthropic Claude - Excellent reasoning'
-    }
-  };
-
-  // Auto-save conversation after every complete message exchange
   useEffect(() => {
-    if (messages.length > 0 && currentSubject && auth.isAuthenticated) {
-      const lastMessage = messages[messages.length - 1];
-      if (lastMessage && lastMessage.sender === 'tutor') {
-        handleSaveConversation();
-      } else {
-        setHasUnsavedChanges(true);
-      }
-    }
-  }, [messages, currentSubject]);
+    // Entrance animation
+    Animated.timing(fadeAnim, {
+      toValue: 1,
+      duration: 1000,
+      useNativeDriver: true,
+    }).start();
 
-  // Menu animation functions
-  const openMenu = () => {
-    setIsMenuOpen(true);
-    Animated.parallel([
-      Animated.timing(slideAnim, {
-        toValue: 0,
-        duration: 250,
-        useNativeDriver: false,
-      }),
-      Animated.timing(overlayOpacity, {
-        toValue: 0.5,
-        duration: 250,
-        useNativeDriver: false,
-      })
-    ]).start();
-  };
+    // Load user stats
+    loadUserStats();
+    
+    // Welcome message
+    setMessages([{
+      role: 'assistant',
+      content: `👋 Hi ${user?.username || 'there'}! I'm Lilibet, your learning companion. What would you like to explore today?`,
+      timestamp: new Date().toISOString(),
+      learningMode: 'discovery'
+    }]);
+  }, []);
 
-  const closeMenu = () => {
-    Animated.parallel([
-      Animated.timing(slideAnim, {
-        toValue: -screenWidth * 0.8,
-        duration: 250,
-        useNativeDriver: false,
-      }),
-      Animated.timing(overlayOpacity, {
-        toValue: 0,
-        duration: 250,
-        useNativeDriver: false,
-      })
-    ]).start(() => {
-      setIsMenuOpen(false);
-    });
-  };
-
-  // Save conversation function (now instant)
-  const handleSaveConversation = async () => {
-    if (!auth.isAuthenticated || !currentSubject || messages.length === 0) return;
-
+  const loadUserStats = async () => {
     try {
-      const result = await auth.saveConversation(
-        currentSubject,
-        messages,
-        'middle',
-        selectedModel,
-        `${currentSubject} session - ${new Date().toLocaleDateString()}`
-      );
-
-      if (result.success) {
-        setHasUnsavedChanges(false);
-        setCurrentConversationId(result.conversationId);
-        console.log('💾 Conversation saved instantly');
-      }
+      const streak = await AsyncStorage.getItem(`streak_${user?.id}`);
+      const points = await AsyncStorage.getItem(`points_${user?.id}`);
+      if (streak) setLearningStreak(parseInt(streak));
+      if (points) setTotalPoints(parseInt(points));
     } catch (error) {
-      console.log('Save failed:', error);
+      console.error('Error loading stats:', error);
     }
   };
 
-  // Show loading screen
-  if (auth.isLoading) {
-    return (
-      <SafeAreaView style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
-        <Text style={styles.loadingText}>Loading Lilibet...</Text>
-      </SafeAreaView>
-    );
-  }
-
-  // Show login screen if not authenticated
-  if (!auth.isAuthenticated) {
-    return <AuthScreen />;
-  }
-
-  // Get server URL
-  const getServerUrl = () => {
-    if (__DEV__) {
-      return isWeb ? 'http://localhost:3001' : 'http://192.168.86.58:3001';
-    } else {
-      return 'https://lilibet-backend-production.up.railway.app';
-    }
-  };
-
-  // Get tutor response
-  const getTutorResponse = async (userMessage, subject) => {
-    try {
-      const serverUrl = getServerUrl();
-      
-      const headers = {
-        'Content-Type': 'application/json',
-      };
-
-      if (auth.token) {
-        headers['Authorization'] = `Bearer ${auth.token}`;
-      }
-      
-      const response = await fetch(`${serverUrl}/api/tutor`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          message: userMessage,
-          subject: subject,
-          model: selectedModel,
-          conversationHistory: messages
-            .filter(msg => msg.sender !== 'system')
-            .map(msg => ({
-              role: msg.sender === 'user' ? 'user' : 'assistant',
-              content: msg.text
-            }))
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to get tutor response');
-      }
-
-      const data = await response.json();
-      return data.response;
-    } catch (error) {
-      console.error('Error calling backend:', error);
-      return "That's a great question! What do you think?";
-    }
-  };
-
-  // Handle message submission
-  const handleSubmit = async () => {
-    if (!inputMessage.trim() || !currentSubject || isLoading) return;
+  const sendMessage = async (text = inputText) => {
+    if (!text.trim()) return;
 
     const userMessage = {
-      id: Date.now(),
-      text: inputMessage,
-      sender: 'user',
-      timestamp: new Date().toLocaleTimeString()
+      role: 'user',
+      content: text,
+      timestamp: new Date().toISOString()
     };
 
     setMessages(prev => [...prev, userMessage]);
-    setInputMessage('');
+    setInputText('');
     setIsLoading(true);
-    setHasUnsavedChanges(true);
 
     try {
-      const tutorResponse = await getTutorResponse(inputMessage, currentSubject);
-      const tutorMessage = {
-        id: Date.now() + 1,
-        text: tutorResponse,
-        sender: 'tutor',
-        timestamp: new Date().toLocaleTimeString()
-      };
-      setMessages(prev => [...prev, tutorMessage]);
-      
-      if (!isMuted) {
-        setTimeout(() => handleSpeakMessage(tutorResponse), 500);
+      const response = await fetch(`${API_URL}/api/chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          message: text,
+          subject: selectedSubject,
+          conversationId: `${user?.id}_${Date.now()}`
+        })
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        if (data.learningMode) {
+          setCurrentLearningMode(data.learningMode);
+        }
+
+        const aiMessage = {
+          role: 'assistant',
+          content: data.response,
+          timestamp: new Date().toISOString(),
+          learningMode: data.learningMode
+        };
+        
+        setMessages(prev => [...prev, aiMessage]);
+        updatePoints(10);
+      } else {
+        Alert.alert('Error', data.error || 'Failed to send message');
       }
     } catch (error) {
-      const errorMessage = {
-        id: Date.now() + 1,
-        text: "Could you try asking me again?",
-        sender: 'tutor',
-        timestamp: new Date().toLocaleTimeString()
-      };
-      setMessages(prev => [...prev, errorMessage]);
+      Alert.alert('Error', 'Network error. Please try again.');
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Speech function
-  const handleSpeakMessage = async (text) => {
-    if (isMuted) return;
+  const updatePoints = async (points) => {
+    const newTotal = totalPoints + points;
+    setTotalPoints(newTotal);
+    await AsyncStorage.setItem(`points_${user?.id}`, String(newTotal));
+  };
+
+  const MessageBubble = ({ message }) => {
+    const isUser = message.role === 'user';
+    const mode = message.learningMode ? LEARNING_MODES[message.learningMode] : null;
     
-    try {
-      setIsSpeaking(true);
-      await speakMessage(text, {
-        onDone: () => setIsSpeaking(false),
-        onStopped: () => setIsSpeaking(false),
-        onError: () => setIsSpeaking(false),
-      });
-    } catch (error) {
-      console.log('Speech error:', error);
-      setIsSpeaking(false);
-    }
-  };
-
-  const toggleMute = async () => {
-    if (!isMuted) {
-      await stopSpeaking();
-      setIsSpeaking(false);
-    }
-    setIsMuted(!isMuted);
-  };
-
-  // Select subject
-  const selectSubject = (subjectId) => {
-    setCurrentSubject(subjectId);
-    
-    const subject = subjects.find(s => s.id === subjectId);
-    const welcomeMessage = {
-      id: Date.now(),
-      text: `Hello ${auth.user?.displayName || 'there'}! I'm Lilibet, your ${subject.name.toLowerCase()} tutor. What would you like to explore today?`,
-      sender: 'tutor',
-      timestamp: new Date().toLocaleTimeString()
-    };
-    
-    setMessages([welcomeMessage]);
-    setCurrentConversationId(null);
-    setHasUnsavedChanges(false);
-  };
-
-  // Resume conversation from history
-  const resumeConversation = (conversation) => {
-    setShowHistory(false);
-    setCurrentSubject(conversation.subject);
-    setMessages(JSON.parse(conversation.messages));
-    setCurrentConversationId(conversation.id);
-    setHasUnsavedChanges(false);
-  };
-
-  // Menu item press handler
-  const handleMenuItemPress = (action) => {
-    closeMenu();
-    
-    switch (action) {
-      case 'history':
-        setShowHistory(true);
-        break;
-      case 'newSession':
-        setCurrentSubject('');
-        setMessages([]);
-        setCurrentConversationId(null);
-        setHasUnsavedChanges(false);
-        break;
-      case 'profile':
-        Alert.alert('Profile', `Logged in as: ${auth.user?.displayName}\nEmail: ${auth.user?.email}`);
-        break;
-      case 'logout':
-        handleLogout();
-        break;
-    }
-  };
-
-  // Logout function
-  const handleLogout = () => {
-    Alert.alert(
-      'Sign Out',
-      'Are you sure? Any unsaved progress will be lost.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { 
-          text: 'Sign Out', 
-          style: 'destructive',
-          onPress: async () => {
-            await auth.logout();
-            setCurrentSubject('');
-            setMessages([]);
-          }
-        }
-      ]
+    return (
+      <Animated.View
+        style={[
+          styles.messageBubbleContainer,
+          isUser ? styles.userBubbleContainer : styles.aiBubbleContainer,
+          { opacity: fadeAnim }
+        ]}
+      >
+        {!isUser && mode && (
+          <View style={styles.learningModeTag}>
+            <Text style={styles.learningModeIcon}>{mode.icon}</Text>
+            <Text style={styles.learningModeText}>{mode.name}</Text>
+          </View>
+        )}
+        <View style={[
+          styles.messageBubble,
+          isUser ? styles.userBubble : styles.aiBubble
+        ]}>
+          <Text style={[
+            styles.messageText,
+            isUser ? styles.userMessageText : styles.aiMessageText
+          ]}>
+            {message.content}
+          </Text>
+          <Text style={styles.messageTime}>
+            {new Date(message.timestamp).toLocaleTimeString([], { 
+              hour: '2-digit', 
+              minute: '2-digit' 
+            })}
+          </Text>
+        </View>
+      </Animated.View>
     );
   };
 
-  // Subject selection screen
-  if (!currentSubject) {
-    return (
-      <SafeAreaView style={styles.container}>
+  return (
+    <SafeAreaView style={styles.container}>
+      <View style={styles.gradient}>
+        {/* Header */}
         <View style={styles.header}>
-          <TouchableOpacity style={styles.menuButton} onPress={openMenu}>
-            <Ionicons name="menu" size={24} color="#1f2937" />
-          </TouchableOpacity>
-          <View style={styles.headerContent}>
-            <Text style={styles.welcomeText}>Welcome back, {auth.user?.displayName}!</Text>
-            <Text style={styles.headerTitle}>Choose Your Subject</Text>
-          </View>
           <TouchableOpacity 
-            style={styles.historyButton} 
-            onPress={() => setShowHistory(true)}
+            onPress={() => setShowMenu(!showMenu)}
+            style={styles.menuButton}
           >
-            <Ionicons name="time" size={24} color="#1f2937" />
+            <Text style={styles.menuIcon}>☰</Text>
+          </TouchableOpacity>
+          
+          <View style={styles.headerCenter}>
+            <Text style={styles.headerTitle}>Lilibet</Text>
+            <View style={styles.statsContainer}>
+              <View style={styles.statItem}>
+                <Text style={styles.statIcon}>🔥</Text>
+                <Text style={styles.statText}>{learningStreak}</Text>
+              </View>
+              <View style={styles.statItem}>
+                <Text style={styles.statIcon}>⭐</Text>
+                <Text style={styles.statText}>{totalPoints}</Text>
+              </View>
+            </View>
+          </View>
+          
+          <TouchableOpacity style={styles.parentButton}>
+            <Text style={styles.parentIcon}>👤</Text>
           </TouchableOpacity>
         </View>
 
-        <ScrollView contentContainerStyle={styles.subjectsContainer}>
-          {subjects.map((subject) => (
+        {/* Current Learning Mode Display */}
+        {currentLearningMode && (
+          <View style={[styles.learningModeDisplay, { backgroundColor: LEARNING_MODES[currentLearningMode].color }]}>
+            <Text style={styles.learningModeDisplayIcon}>
+              {LEARNING_MODES[currentLearningMode].icon}
+            </Text>
+            <View>
+              <Text style={styles.learningModeDisplayTitle}>
+                {LEARNING_MODES[currentLearningMode].name} Mode
+              </Text>
+              <Text style={styles.learningModeDisplayDesc}>
+                {LEARNING_MODES[currentLearningMode].description}
+              </Text>
+            </View>
+          </View>
+        )}
+
+        {/* Subject Selector */}
+        <ScrollView 
+          horizontal 
+          showsHorizontalScrollIndicator={false}
+          style={styles.subjectSelector}
+        >
+          {Object.keys(SUBJECTS).map(subject => (
             <TouchableOpacity
-              key={subject.id}
-              style={[styles.subjectButton, { backgroundColor: subject.color }]}
-              onPress={() => selectSubject(subject.id)}
+              key={subject}
+              onPress={() => setSelectedSubject(subject)}
+              style={[
+                styles.subjectButton,
+                selectedSubject === subject && { backgroundColor: SUBJECTS[subject].color }
+              ]}
             >
-              <Ionicons name={subject.icon} size={48} color="white" />
-              <Text style={styles.subjectText}>{subject.name}</Text>
-              <Text style={styles.subjectSubtext}>
-                {subject.id === 'math' && 'Numbers, equations, problem solving'}
-                {subject.id === 'reading' && 'Stories, comprehension, analysis'}
-                {subject.id === 'writing' && 'Essays, creativity, expression'}
-                {subject.id === 'science' && 'Experiments, discoveries, nature'}
+              <Text style={styles.subjectEmoji}>
+                {SUBJECTS[subject].emoji}
+              </Text>
+              <Text style={[
+                styles.subjectText,
+                selectedSubject === subject && styles.selectedSubjectText
+              ]}>
+                {subject}
               </Text>
             </TouchableOpacity>
           ))}
         </ScrollView>
 
-        {/* Hamburger Menu */}
-        {isMenuOpen && (
-          <>
-            <Animated.View 
-              style={[styles.overlay, { opacity: overlayOpacity }]}
-            >
-              <TouchableOpacity 
-                style={styles.overlayTouchable}
-                onPress={closeMenu}
-                activeOpacity={1}
-              />
-            </Animated.View>
-            
-            <Animated.View 
-              style={[styles.sideMenu, { transform: [{ translateX: slideAnim }] }]}
-            >
-              <View style={styles.menuHeader}>
-                <View style={styles.userInfo}>
-                  <View style={styles.userAvatar}>
-                    <Text style={styles.userInitial}>
-                      {auth.user?.displayName?.charAt(0).toUpperCase() || 'U'}
-                    </Text>
-                  </View>
-                  <View>
-                    <Text style={styles.userName}>{auth.user?.displayName}</Text>
-                    <Text style={styles.userEmail}>{auth.user?.email}</Text>
-                  </View>
-                </View>
-                <TouchableOpacity onPress={closeMenu} style={styles.closeMenuButton}>
-                  <Ionicons name="close" size={24} color="#6b7280" />
-                </TouchableOpacity>
+        {/* Messages Area */}
+        <View style={styles.messagesContainer}>
+          <ScrollView
+            ref={scrollViewRef}
+            style={styles.messagesScrollView}
+            contentContainerStyle={styles.messagesContent}
+            onContentSizeChange={() => scrollViewRef.current?.scrollToEnd()}
+          >
+            {messages.map((message, index) => (
+              <MessageBubble key={index} message={message} />
+            ))}
+            {isLoading && (
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color="#6C63FF" />
+                <Text style={styles.loadingText}>Lilibet is thinking...</Text>
               </View>
+            )}
+          </ScrollView>
+        </View>
 
-              <View style={styles.menuItems}>
-                <TouchableOpacity 
-                  style={styles.menuItem}
-                  onPress={() => handleMenuItemPress('newSession')}
-                >
-                  <Ionicons name="add-circle-outline" size={24} color="#3b82f6" />
-                  <Text style={styles.menuItemText}>New Session</Text>
-                </TouchableOpacity>
+        {/* Input Area */}
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.inputContainer}
+        >
+          <View style={styles.inputWrapper}>
+            <TextInput
+              style={styles.textInput}
+              value={inputText}
+              onChangeText={setInputText}
+              placeholder="Ask me anything..."
+              placeholderTextColor="#999"
+              multiline
+              maxHeight={100}
+              onSubmitEditing={() => sendMessage()}
+            />
+            
+            <TouchableOpacity
+              onPress={() => sendMessage()}
+              style={[styles.sendButton, !inputText.trim() && styles.sendButtonDisabled]}
+              disabled={!inputText.trim() || isLoading}
+            >
+              <Text style={styles.sendIcon}>➤</Text>
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
 
-                <TouchableOpacity 
+        {/* Simple Menu Modal */}
+        {showMenu && (
+          <Modal
+            visible={showMenu}
+            transparent
+            animationType="slide"
+            onRequestClose={() => setShowMenu(false)}
+          >
+            <TouchableOpacity 
+              style={styles.menuOverlay}
+              onPress={() => setShowMenu(false)}
+            >
+              <View style={styles.menuContent}>
+                <TouchableOpacity
                   style={styles.menuItem}
-                  onPress={() => handleMenuItemPress('history')}
+                  onPress={() => {
+                    setShowMenu(false);
+                    Alert.alert('History', 'Conversation history coming soon!');
+                  }}
                 >
-                  <Ionicons name="time-outline" size={24} color="#10b981" />
+                  <Text style={styles.menuItemIcon}>📚</Text>
                   <Text style={styles.menuItemText}>Conversation History</Text>
                 </TouchableOpacity>
-
-                <TouchableOpacity 
+                
+                <TouchableOpacity
                   style={styles.menuItem}
-                  onPress={() => handleMenuItemPress('profile')}
+                  onPress={() => {
+                    setShowMenu(false);
+                    Alert.alert('Dashboard', 'Parent dashboard coming soon!');
+                  }}
                 >
-                  <Ionicons name="person-outline" size={24} color="#8b5cf6" />
-                  <Text style={styles.menuItemText}>Profile</Text>
+                  <Text style={styles.menuItemIcon}>📊</Text>
+                  <Text style={styles.menuItemText}>Parent Dashboard</Text>
                 </TouchableOpacity>
-
-                <View style={styles.menuDivider} />
-
-                <TouchableOpacity 
+                
+                <TouchableOpacity
                   style={styles.menuItem}
-                  onPress={() => handleMenuItemPress('logout')}
+                  onPress={() => {
+                    Alert.alert(
+                      'Logout',
+                      'Are you sure you want to logout?',
+                      [
+                        { text: 'Cancel', style: 'cancel' },
+                        { 
+                          text: 'Logout', 
+                          onPress: () => {
+                            setShowMenu(false);
+                            logout();
+                          },
+                          style: 'destructive'
+                        }
+                      ]
+                    );
+                  }}
                 >
-                  <Ionicons name="log-out-outline" size={24} color="#ef4444" />
-                  <Text style={[styles.menuItemText, { color: '#ef4444' }]}>Sign Out</Text>
+                  <Text style={styles.menuItemIcon}>🚪</Text>
+                  <Text style={[styles.menuItemText, { color: '#FF6B6B' }]}>
+                    Logout
+                  </Text>
                 </TouchableOpacity>
               </View>
-            </Animated.View>
-          </>
+            </TouchableOpacity>
+          </Modal>
         )}
+      </View>
+    </SafeAreaView>
+  );
+}
 
-        {/* Conversation History Modal */}
-        <Modal
-          visible={showHistory}
-          animationType="slide"
-          presentationStyle="fullScreen"
-        >
-          <ConversationHistory
-            onSelectConversation={resumeConversation}
-            onClose={() => setShowHistory(false)}
-          />
-        </Modal>
-      </SafeAreaView>
+// Main App Component
+function App() {
+  const [isReady, setIsReady] = useState(false);
+
+  useEffect(() => {
+    // Check if user is already logged in
+    AsyncStorage.getItem('token').then(token => {
+      setIsReady(true);
+    });
+  }, []);
+
+  if (!isReady) {
+    return (
+      <View style={styles.loadingScreen}>
+        <ActivityIndicator size="large" color="#6C63FF" />
+      </View>
     );
   }
 
-  // Chat interface
-  return (
-    <SafeAreaView style={styles.container}>
-      {/* Header */}
-      <View style={styles.chatHeader}>
-        <View style={styles.headerLeft}>
-          <TouchableOpacity 
-            style={styles.hamburgerButton} 
-            onPress={openMenu}
-          >
-            <Ionicons name="menu" size={20} color="#1f2937" />
-          </TouchableOpacity>
-          <View style={[styles.iconContainer, { backgroundColor: subjects.find(s => s.id === currentSubject)?.color }]}>
-            <Ionicons 
-              name={subjects.find(s => s.id === currentSubject)?.icon} 
-              size={20} 
-              color="white" 
-            />
-          </View>
-          <View>
-            <Text style={styles.headerTitle}>
-              {subjects.find(s => s.id === currentSubject)?.name} with Lilibet
-            </Text>
-            <Text style={styles.headerSubtitle}>
-              {auth.user?.displayName} • {hasUnsavedChanges ? 'Unsaved changes' : 'Saved'}
-            </Text>
-          </View>
-        </View>
-
-        <View style={styles.headerRight}>
-          {hasUnsavedChanges && (
-            <TouchableOpacity
-              style={styles.saveButton}
-              onPress={handleSaveConversation}
-            >
-              <Ionicons name="save" size={16} color="#3b82f6" />
-            </TouchableOpacity>
-          )}
-          
-          <TouchableOpacity
-            style={[styles.voiceButton, isMuted ? styles.voiceMuted : styles.voiceOn]}
-            onPress={toggleMute}
-          >
-            <Ionicons 
-              name={isMuted ? "volume-mute" : "volume-high"} 
-              size={16} 
-              color={isMuted ? "#dc2626" : "#059669"} 
-            />
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      {/* Messages */}
-      <ScrollView 
-        ref={scrollViewRef}
-        style={styles.messagesContainer}
-        contentContainerStyle={styles.messagesContent}
-        showsVerticalScrollIndicator={false}
-      >
-        {messages.map((message) => (
-          <View
-            key={message.id}
-            style={[
-              styles.messageRow,
-              message.sender === 'user' ? styles.userRow : styles.tutorRow
-            ]}
-          >
-            <View
-              style={[
-                styles.messageBubble,
-                message.sender === 'user' ? styles.userBubble : styles.tutorBubble
-              ]}
-            >
-              <Text style={[
-                styles.messageText,
-                message.sender === 'user' ? styles.userText : styles.tutorText
-              ]}>
-                {message.text}
-              </Text>
-            </View>
-          </View>
-        ))}
-        
-        {isLoading && (
-          <View style={styles.messageRow}>
-            <View style={[styles.messageBubble, styles.tutorBubble]}>
-              <Text style={styles.tutorText}>
-                Lilibet is thinking...
-              </Text>
-            </View>
-          </View>
-        )}
-      </ScrollView>
-
-      {/* Input Bar */}
-      <View style={styles.inputBar}>
-        <TextInput
-          style={styles.input}
-          value={inputMessage}
-          onChangeText={setInputMessage}
-          placeholder="Type your question..."
-          onSubmitEditing={handleSubmit}
-          returnKeyType="send"
-        />
-        
-        <TouchableOpacity style={styles.sendButton} onPress={handleSubmit}>
-          <Ionicons name="send" size={20} color="white" />
-        </TouchableOpacity>
-      </View>
-
-      {/* Chat Hamburger Menu */}
-      {isMenuOpen && (
-        <>
-          <Animated.View 
-            style={[styles.overlay, { opacity: overlayOpacity }]}
-          >
-            <TouchableOpacity 
-              style={styles.overlayTouchable}
-              onPress={closeMenu}
-              activeOpacity={1}
-            />
-          </Animated.View>
-          
-          <Animated.View 
-            style={[styles.sideMenu, { transform: [{ translateX: slideAnim }] }]}
-          >
-            <View style={styles.menuHeader}>
-              <View style={styles.userInfo}>
-                <View style={styles.userAvatar}>
-                  <Text style={styles.userInitial}>
-                    {auth.user?.displayName?.charAt(0).toUpperCase() || 'U'}
-                  </Text>
-                </View>
-                <View>
-                  <Text style={styles.userName}>{auth.user?.displayName}</Text>
-                  <Text style={styles.userEmail}>{auth.user?.email}</Text>
-                </View>
-              </View>
-              <TouchableOpacity onPress={closeMenu} style={styles.closeMenuButton}>
-                <Ionicons name="close" size={24} color="#6b7280" />
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.menuItems}>
-              <TouchableOpacity 
-                style={styles.menuItem}
-                onPress={() => handleMenuItemPress('newSession')}
-              >
-                <Ionicons name="add-circle-outline" size={24} color="#3b82f6" />
-                <Text style={styles.menuItemText}>New Session</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity 
-                style={styles.menuItem}
-                onPress={() => handleMenuItemPress('history')}
-              >
-                <Ionicons name="time-outline" size={24} color="#10b981" />
-                <Text style={styles.menuItemText}>Conversation History</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity 
-                style={styles.menuItem}
-                onPress={() => handleMenuItemPress('profile')}
-              >
-                <Ionicons name="person-outline" size={24} color="#8b5cf6" />
-                <Text style={styles.menuItemText}>Profile</Text>
-              </TouchableOpacity>
-
-              <View style={styles.menuDivider} />
-
-              <TouchableOpacity 
-                style={styles.menuItem}
-                onPress={() => handleMenuItemPress('logout')}
-              >
-                <Ionicons name="log-out-outline" size={24} color="#ef4444" />
-                <Text style={[styles.menuItemText, { color: '#ef4444' }]}>Sign Out</Text>
-              </TouchableOpacity>
-            </View>
-          </Animated.View>
-        </>
-      )}
-
-      {/* Conversation History Modal */}
-      <Modal
-        visible={showHistory}
-        animationType="slide"
-        presentationStyle="fullScreen"
-      >
-        <ConversationHistory
-          onSelectConversation={resumeConversation}
-          onClose={() => setShowHistory(false)}
-        />
-      </Modal>
-    </SafeAreaView>
-  );
-};
-
-// Main App with AuthProvider wrapper
-export default function App() {
   return (
     <AuthProvider>
-      <LilibetApp />
+      <AppContent />
     </AuthProvider>
   );
 }
 
+function AppContent() {
+  const { token } = useAuth();
+  return token ? <ChatInterface /> : <AuthScreen />;
+}
+
+// Export the App component as default
+export default App;
+
+// Styles
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#667EEA',
   },
-  loadingText: {
-    fontSize: 18,
-    color: '#6b7280',
-    textAlign: 'center',
+  gradient: {
+    flex: 1,
+    backgroundColor: '#667EEA',
+  },
+  loadingScreen: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#F5F7FA',
   },
   header: {
     flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 20,
-    backgroundColor: 'white',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
-  },
-  headerContent: {
-    alignItems: 'center',
-    flex: 1,
-  },
-  welcomeText: {
-    fontSize: 14,
-    color: '#6b7280',
-    textAlign: 'center',
-  },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#1f2937',
-    textAlign: 'center',
+    paddingTop: 20,
+    paddingHorizontal: 20,
+    paddingBottom: 20,
+    backgroundColor: '#667EEA',
   },
   menuButton: {
-    padding: 8,
-    borderRadius: 8,
-    backgroundColor: '#f3f4f6',
+    padding: 5,
   },
-  historyButton: {
-    padding: 8,
-    borderRadius: 8,
-    backgroundColor: '#f3f4f6',
+  menuIcon: {
+    fontSize: 28,
+    color: 'white',
   },
-  subjectsContainer: {
-    flexGrow: 1,
-    justifyContent: 'center',
+  headerCenter: {
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 40,
   },
-  subjectButton: {
-    width: screenWidth - 80,
-    padding: 30,
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  subjectText: {
+  headerTitle: {
     fontSize: 24,
     fontWeight: 'bold',
     color: 'white',
-    marginTop: 16,
+    marginBottom: 5,
   },
-  subjectSubtext: {
-    fontSize: 14,
-    color: 'white',
-    opacity: 0.9,
-    textAlign: 'center',
-    marginTop: 8,
-  },
-  chatHeader: {
+  statsContainer: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    gap: 15,
+  },
+  statItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 15,
+  },
+  statIcon: {
+    fontSize: 14,
+  },
+  statText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  parentButton: {
+    padding: 5,
+  },
+  parentIcon: {
+    fontSize: 28,
+    color: 'white',
+  },
+  learningModeDisplay: {
+    marginHorizontal: 20,
+    marginBottom: 15,
+    flexDirection: 'row',
     alignItems: 'center',
     padding: 12,
-    backgroundColor: 'white',
-    borderBottomWidth: 2,
-    borderBottomColor: '#e5e7eb',
+    borderRadius: 15,
+    gap: 10,
   },
-  headerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
+  learningModeDisplayIcon: {
+    fontSize: 24,
   },
-  headerRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  learningModeDisplayTitle: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
-  hamburgerButton: {
-    padding: 8,
-    marginRight: 12,
-    borderRadius: 8,
-    backgroundColor: '#f3f4f6',
-  },
-  iconContainer: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 10,
-  },
-  headerSubtitle: {
+  learningModeDisplayDesc: {
+    color: 'rgba(255, 255, 255, 0.9)',
     fontSize: 12,
-    color: '#6b7280',
   },
-  saveButton: {
-    padding: 8,
-    borderRadius: 16,
-    marginRight: 8,
-    backgroundColor: '#eff6ff',
+  subjectSelector: {
+    maxHeight: 80,
+    paddingHorizontal: 15,
+    marginBottom: 10,
   },
-  voiceButton: {
-    padding: 8,
-    borderRadius: 16,
+  subjectButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 25,
+    alignItems: 'center',
+    minWidth: 90,
+    marginHorizontal: 5,
+    backgroundColor: 'white',
   },
-  voiceMuted: {
-    backgroundColor: '#fee2e2',
+  subjectEmoji: {
+    fontSize: 24,
+    marginBottom: 5,
   },
-  voiceOn: {
-    backgroundColor: '#dcfce7',
+  subjectText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#666',
+  },
+  selectedSubjectText: {
+    color: 'white',
   },
   messagesContainer: {
     flex: 1,
-    backgroundColor: '#f8fafc',
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    borderTopLeftRadius: 30,
+    borderTopRightRadius: 30,
+    marginTop: 10,
+  },
+  messagesScrollView: {
+    flex: 1,
   },
   messagesContent: {
-    padding: 16,
+    padding: 20,
+    paddingBottom: 10,
   },
-  messageRow: {
-    marginVertical: 4,
+  messageBubbleContainer: {
+    marginBottom: 15,
   },
-  userRow: {
+  userBubbleContainer: {
     alignItems: 'flex-end',
   },
-  tutorRow: {
+  aiBubbleContainer: {
     alignItems: 'flex-start',
+  },
+  learningModeTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    backgroundColor: 'rgba(108, 99, 255, 0.1)',
+    borderRadius: 10,
+    alignSelf: 'flex-start',
+  },
+  learningModeIcon: {
+    fontSize: 12,
+    marginRight: 5,
+  },
+  learningModeText: {
+    fontSize: 10,
+    color: '#6C63FF',
+    fontWeight: '600',
   },
   messageBubble: {
     maxWidth: '80%',
     padding: 12,
-    borderRadius: 16,
+    borderRadius: 20,
   },
   userBubble: {
-    backgroundColor: '#3b82f6',
+    backgroundColor: '#6C63FF',
+    borderTopRightRadius: 5,
   },
-  tutorBubble: {
+  aiBubble: {
     backgroundColor: 'white',
+    borderTopLeftRadius: 5,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: '#E0E0E0',
   },
   messageText: {
     fontSize: 16,
     lineHeight: 22,
   },
-  userText: {
+  userMessageText: {
     color: 'white',
   },
-  tutorText: {
-    color: '#1f2937',
+  aiMessageText: {
+    color: '#333',
   },
-  inputBar: {
-    flexDirection: 'row',
-    padding: 16,
+  messageTime: {
+    fontSize: 10,
+    marginTop: 5,
+    opacity: 0.7,
+  },
+  loadingContainer: {
+    alignItems: 'center',
+    padding: 20,
+  },
+  loadingText: {
+    marginTop: 10,
+    color: '#6C63FF',
+    fontSize: 14,
+  },
+  inputContainer: {
     backgroundColor: 'white',
     borderTopWidth: 1,
-    borderTopColor: '#e5e7eb',
-    alignItems: 'center',
+    borderTopColor: '#E0E0E0',
   },
-  input: {
+  inputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    padding: 10,
+    gap: 10,
+  },
+  textInput: {
     flex: 1,
     borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 20,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    borderColor: '#E0E0E0',
+    borderRadius: 25,
+    paddingHorizontal: 15,
+    paddingVertical: 10,
     fontSize: 16,
-    backgroundColor: '#f9fafb',
-    marginRight: 12,
+    maxHeight: 100,
+    backgroundColor: '#F8F9FA',
   },
   sendButton: {
-    backgroundColor: '#3b82f6',
-    borderRadius: 20,
-    width: 40,
-    height: 40,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#6C63FF',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  
-  // Hamburger Menu Styles
-  overlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: '#000000',
-    zIndex: 1000,
+  sendButtonDisabled: {
+    backgroundColor: '#D0D0D0',
   },
-  overlayTouchable: {
-    flex: 1,
-  },
-  sideMenu: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    bottom: 0,
-    width: screenWidth * 0.8,
-    backgroundColor: 'white',
-    zIndex: 1001,
-    shadowColor: '#000',
-    shadowOffset: { width: 2, height: 0 },
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    elevation: 8,
-  },
-  menuHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 24,
-    paddingTop: Platform.OS === 'ios' ? 60 : 40,
-    backgroundColor: '#f8fafc',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
-  },
-  userInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-  },
-  userAvatar: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: '#3b82f6',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  userInitial: {
-    fontSize: 20,
-    fontWeight: 'bold',
+  sendIcon: {
     color: 'white',
+    fontSize: 20,
   },
-  userName: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#1f2937',
-  },
-  userEmail: {
-    fontSize: 14,
-    color: '#6b7280',
-    marginTop: 2,
-  },
-  closeMenuButton: {
-    padding: 4,
-  },
-  menuItems: {
+  menuOverlay: {
     flex: 1,
-    paddingTop: 20,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  menuContent: {
+    backgroundColor: 'white',
+    borderTopLeftRadius: 30,
+    borderTopRightRadius: 30,
+    padding: 20,
+    paddingBottom: 40,
   },
   menuItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 24,
-    paddingVertical: 16,
+    paddingVertical: 15,
+    gap: 15,
+  },
+  menuItemIcon: {
+    fontSize: 24,
   },
   menuItemText: {
     fontSize: 16,
-    color: '#1f2937',
-    marginLeft: 16,
-    fontWeight: '500',
-  },
-  menuDivider: {
-    height: 1,
-    backgroundColor: '#e5e7eb',
-    marginVertical: 12,
-    marginHorizontal: 24,
+    color: '#333',
   },
 });

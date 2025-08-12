@@ -1,4 +1,4 @@
-// AuthContext.js - Complete File
+// AuthContext.js - Updated for Hybrid Authentication
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
@@ -18,7 +18,7 @@ export const AuthProvider = ({ children }) => {
   const [token, setToken] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Get server URL (same logic as your App.js)
+  // Get server URL
   const getServerUrl = () => {
     if (__DEV__) {
       return Platform.OS === 'web' ? 'http://localhost:3001' : 'http://192.168.86.58:3001';
@@ -48,7 +48,8 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const login = async (email, password) => {
+  // Updated login to accept email OR username
+  const login = async (loginId, password) => {
     try {
       const serverUrl = getServerUrl();
       const response = await fetch(`${serverUrl}/api/auth/login`, {
@@ -56,7 +57,7 @@ export const AuthProvider = ({ children }) => {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ email, password })
+        body: JSON.stringify({ loginId, password })
       });
 
       const data = await response.json();
@@ -79,7 +80,8 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const register = async (email, password, displayName, ageGroup) => {
+  // Updated register with hybrid support
+  const register = async (email, username, password, displayName, ageGroup, accountType, parentEmail) => {
     try {
       const serverUrl = getServerUrl();
       const response = await fetch(`${serverUrl}/api/auth/register`, {
@@ -89,9 +91,12 @@ export const AuthProvider = ({ children }) => {
         },
         body: JSON.stringify({ 
           email, 
+          username,
           password, 
           displayName, 
-          ageGroup 
+          ageGroup,
+          accountType,
+          parentEmail
         })
       });
 
@@ -117,7 +122,6 @@ export const AuthProvider = ({ children }) => {
 
   const logout = async () => {
     try {
-      // Call logout endpoint if we have a token
       if (token) {
         const serverUrl = getServerUrl();
         await fetch(`${serverUrl}/api/auth/logout`, {
@@ -131,72 +135,10 @@ export const AuthProvider = ({ children }) => {
     } catch (error) {
       console.log('Logout endpoint error:', error);
     } finally {
-      // Clear local storage regardless
       await AsyncStorage.removeItem('authToken');
       await AsyncStorage.removeItem('user');
       setToken(null);
       setUser(null);
-    }
-  };
-
-  const saveConversation = async (subject, messages, detectedLevel, modelUsed, title) => {
-    if (!token) return { success: false, error: 'Not authenticated' };
-
-    try {
-      const serverUrl = getServerUrl();
-      const response = await fetch(`${serverUrl}/api/conversations`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          subject,
-          messages,
-          detectedLevel,
-          modelUsed,
-          title
-        })
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to save conversation');
-      }
-
-      return { success: true, conversationId: data.conversationId };
-    } catch (error) {
-      console.error('Save conversation error:', error);
-      return { success: false, error: error.message };
-    }
-  };
-
-  const getConversations = async (subject = null) => {
-    if (!token) return { success: false, error: 'Not authenticated' };
-
-    try {
-      const serverUrl = getServerUrl();
-      const url = subject 
-        ? `${serverUrl}/api/conversations?subject=${subject}`
-        : `${serverUrl}/api/conversations`;
-        
-      const response = await fetch(url, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        }
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to fetch conversations');
-      }
-
-      return { success: true, conversations: data.conversations };
-    } catch (error) {
-      console.error('Get conversations error:', error);
-      return { success: false, error: error.message };
     }
   };
 
@@ -207,9 +149,7 @@ export const AuthProvider = ({ children }) => {
     isAuthenticated: !!user,
     login,
     register,
-    logout,
-    saveConversation,
-    getConversations
+    logout
   };
 
   return (
@@ -218,3 +158,5 @@ export const AuthProvider = ({ children }) => {
     </AuthContext.Provider>
   );
 };
+
+export { AuthContext };

@@ -15,6 +15,8 @@
     "expo": "~53.0.17",
     "expo-audio": "~0.4.8",
     "expo-av": "~15.1.7",
+    "expo-haptics": "^14.1.4",
+    "expo-linear-gradient": "^14.1.5",
     "expo-speech": "^13.1.7",
     "expo-status-bar": "~2.2.3",
     "react": "19.0.0",
