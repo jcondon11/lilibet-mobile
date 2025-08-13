@@ -9,6 +9,9 @@ import {
   ActivityIndicator,
   Alert,
   SafeAreaView,
+  KeyboardAvoidingView,
+  Platform,
+  Keyboard,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -30,6 +33,7 @@ export default function App() {
   const [selectedSubject, setSelectedSubject] = useState('General');
   const [isSending, setIsSending] = useState(false);
   const scrollViewRef = useRef();
+  const inputRef = useRef();
 
   const subjects = ['Math', 'Science', 'Reading', 'Writing', 'History', 'General'];
   const ageGroups = [
@@ -184,13 +188,18 @@ export default function App() {
 
     const userMessage = {
       role: 'user',
-      content: inputText,
+      content: inputText.trim(),
       timestamp: new Date().toISOString()
     };
 
     setMessages(prev => [...prev, userMessage]);
     setInputText('');
     setIsSending(true);
+    
+    // Scroll to bottom after adding message
+    setTimeout(() => {
+      scrollViewRef.current?.scrollToEnd({ animated: true });
+    }, 100);
 
     try {
       const response = await fetch(`${API_URL}/api/tutor`, {
@@ -215,6 +224,14 @@ export default function App() {
           timestamp: new Date().toISOString()
         };
         setMessages(prev => [...prev, aiMessage]);
+        
+        // Dismiss keyboard after AI responds
+        Keyboard.dismiss();
+        
+        // Scroll to bottom after AI response
+        setTimeout(() => {
+          scrollViewRef.current?.scrollToEnd({ animated: true });
+        }, 100);
       } else {
         Alert.alert('Error', data.error || 'Failed to send message');
       }
@@ -250,226 +267,261 @@ export default function App() {
   if (!isLoggedIn) {
     return (
       <SafeAreaView style={styles.container}>
-        <View style={styles.authContainer}>
-          <Text style={styles.appTitle}>Lilibet</Text>
-          <Text style={styles.appSubtitle}>Your AI Learning Companion</Text>
+        <KeyboardAvoidingView 
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.container}
+        >
+          <ScrollView 
+            contentContainerStyle={styles.authScrollContainer}
+            keyboardShouldPersistTaps="handled"
+          >
+            <View style={styles.authContainer}>
+              <Text style={styles.appTitle}>Lilibet</Text>
+              <Text style={styles.appSubtitle}>Your AI Learning Companion</Text>
 
-          <View style={styles.authForm}>
-            <Text style={styles.authTitle}>
-              {showLogin ? 'Welcome Back!' : 'Create Account'}
-            </Text>
+              <View style={styles.authForm}>
+                <Text style={styles.authTitle}>
+                  {showLogin ? 'Welcome Back!' : 'Create Account'}
+                </Text>
 
-            {/* User Type Selector (Registration Only) */}
-            {!showLogin && (
-              <View style={styles.userTypeContainer}>
-                <Text style={styles.label}>Account Type:</Text>
-                <View style={styles.userTypeRow}>
-                  <TouchableOpacity
-                    style={[styles.userTypeButton, userType === 'student' && styles.userTypeActive]}
-                    onPress={() => setUserType('student')}
-                  >
-                    <Text style={styles.userTypeText}>🎓 Student</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.userTypeButton, userType === 'parent' && styles.userTypeActive]}
-                    onPress={() => setUserType('parent')}
-                  >
-                    <Text style={styles.userTypeText}>👨‍👩‍👧‍👦 Parent</Text>
-                  </TouchableOpacity>
+                {/* User Type Selector (Registration Only) */}
+                {!showLogin && (
+                  <View style={styles.userTypeContainer}>
+                    <Text style={styles.label}>Account Type:</Text>
+                    <View style={styles.userTypeRow}>
+                      <TouchableOpacity
+                        style={[styles.userTypeButton, userType === 'student' && styles.userTypeActive]}
+                        onPress={() => setUserType('student')}
+                      >
+                        <Text style={styles.userTypeText}>🎓 Student</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.userTypeButton, userType === 'parent' && styles.userTypeActive]}
+                        onPress={() => setUserType('parent')}
+                      >
+                        <Text style={styles.userTypeText}>👨‍👩‍👧‍👦 Parent</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
+
+                {/* Name Field (Registration Only) */}
+                {!showLogin && (
+                  <View>
+                    <Text style={styles.label}>Your Name:</Text>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="Enter your name"
+                      placeholderTextColor="#999"
+                      value={displayName}
+                      onChangeText={setDisplayName}
+                      returnKeyType="next"
+                      onSubmitEditing={() => Keyboard.dismiss()}
+                    />
+                  </View>
+                )}
+
+                {/* Email/Username Field */}
+                <View>
+                  <Text style={styles.label}>
+                    {showLogin ? 'Email or Username:' : 'Email:'}
+                  </Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder={showLogin ? "Enter email or username" : "Enter your email"}
+                    placeholderTextColor="#999"
+                    value={email}
+                    onChangeText={setEmail}
+                    autoCapitalize="none"
+                    keyboardType="email-address"
+                    returnKeyType="next"
+                    onSubmitEditing={() => Keyboard.dismiss()}
+                  />
                 </View>
-              </View>
-            )}
 
-            {/* Name Field (Registration Only) */}
-            {!showLogin && (
-              <View>
-                <Text style={styles.label}>Your Name:</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Enter your name"
-                  placeholderTextColor="#999"
-                  value={displayName}
-                  onChangeText={setDisplayName}
-                />
-              </View>
-            )}
+                {/* Password Field */}
+                <View>
+                  <Text style={styles.label}>Password:</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Enter your password"
+                    placeholderTextColor="#999"
+                    value={password}
+                    onChangeText={setPassword}
+                    secureTextEntry
+                    returnKeyType={showLogin ? "done" : "next"}
+                    onSubmitEditing={showLogin ? handleLogin : () => Keyboard.dismiss()}
+                  />
+                </View>
 
-            {/* Email/Username Field */}
-            <View>
-              <Text style={styles.label}>
-                {showLogin ? 'Email or Username:' : 'Email:'}
-              </Text>
-              <TextInput
-                style={styles.input}
-                placeholder={showLogin ? "Enter email or username" : "Enter your email"}
-                placeholderTextColor="#999"
-                value={email}
-                onChangeText={setEmail}
-                autoCapitalize="none"
-                keyboardType="email-address"
-              />
+                {/* Age Group (Student Registration Only) */}
+                {!showLogin && userType === 'student' && (
+                  <View>
+                    <Text style={styles.label}>Learning Level:</Text>
+                    {ageGroups.map((group) => (
+                      <TouchableOpacity
+                        key={group.id}
+                        style={[styles.ageGroupButton, ageGroup === group.id && styles.ageGroupActive]}
+                        onPress={() => setAgeGroup(group.id)}
+                      >
+                        <Text style={styles.ageGroupText}>{group.icon} {group.name}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                )}
+
+                {/* Submit Button */}
+                <TouchableOpacity
+                  style={styles.submitButton}
+                  onPress={showLogin ? handleLogin : handleRegister}
+                  disabled={isLoading}
+                >
+                  <Text style={styles.submitButtonText}>
+                    {isLoading ? 'Loading...' : (showLogin ? 'Sign In' : 'Create Account')}
+                  </Text>
+                </TouchableOpacity>
+
+                {/* Toggle Mode */}
+                <TouchableOpacity
+                  style={styles.toggleButton}
+                  onPress={() => {
+                    setShowLogin(!showLogin);
+                    // Clear form when switching
+                    setEmail('');
+                    setPassword('');
+                    setDisplayName('');
+                  }}
+                >
+                  <Text style={styles.toggleText}>
+                    {showLogin ? "Don't have an account? Sign Up" : 'Already have an account? Sign In'}
+                  </Text>
+                </TouchableOpacity>
+
+                {/* TEST: Quick Fill Button (for development) */}
+                <TouchableOpacity
+                  style={styles.testButton}
+                  onPress={() => {
+                    if (showLogin) {
+                      // For login testing
+                      setEmail('test@example.com');
+                      setPassword('password123');
+                    } else {
+                      // For registration testing
+                      const randomNum = Math.floor(Math.random() * 1000);
+                      setEmail(`test${randomNum}@example.com`);
+                      setPassword('password123');
+                      setDisplayName(`Test User ${randomNum}`);
+                    }
+                    console.log('🧪 Filled test credentials');
+                  }}
+                >
+                  <Text style={styles.testButtonText}>
+                    🧪 {showLogin ? 'Fill Test Login' : 'Generate Test Account'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
             </View>
-
-            {/* Password Field */}
-            <View>
-              <Text style={styles.label}>Password:</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Enter your password"
-                placeholderTextColor="#999"
-                value={password}
-                onChangeText={setPassword}
-                secureTextEntry
-              />
-            </View>
-
-            {/* Age Group (Student Registration Only) */}
-            {!showLogin && userType === 'student' && (
-              <View>
-                <Text style={styles.label}>Learning Level:</Text>
-                {ageGroups.map((group) => (
-                  <TouchableOpacity
-                    key={group.id}
-                    style={[styles.ageGroupButton, ageGroup === group.id && styles.ageGroupActive]}
-                    onPress={() => setAgeGroup(group.id)}
-                  >
-                    <Text style={styles.ageGroupText}>{group.icon} {group.name}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            )}
-
-            {/* Submit Button */}
-            <TouchableOpacity
-              style={styles.submitButton}
-              onPress={showLogin ? handleLogin : handleRegister}
-              disabled={isLoading}
-            >
-              <Text style={styles.submitButtonText}>
-                {isLoading ? 'Loading...' : (showLogin ? 'Sign In' : 'Create Account')}
-              </Text>
-            </TouchableOpacity>
-
-            {/* Toggle Mode */}
-            <TouchableOpacity
-              style={styles.toggleButton}
-              onPress={() => {
-                setShowLogin(!showLogin);
-                // Clear form when switching
-                setEmail('');
-                setPassword('');
-                setDisplayName('');
-              }}
-            >
-              <Text style={styles.toggleText}>
-                {showLogin ? "Don't have an account? Sign Up" : 'Already have an account? Sign In'}
-              </Text>
-            </TouchableOpacity>
-
-            {/* TEST: Quick Fill Button (for development) */}
-            <TouchableOpacity
-              style={styles.testButton}
-              onPress={() => {
-                if (showLogin) {
-                  // For login testing
-                  setEmail('test@example.com');
-                  setPassword('password123');
-                } else {
-                  // For registration testing
-                  const randomNum = Math.floor(Math.random() * 1000);
-                  setEmail(`test${randomNum}@example.com`);
-                  setPassword('password123');
-                  setDisplayName(`Test User ${randomNum}`);
-                }
-                console.log('🧪 Filled test credentials');
-              }}
-            >
-              <Text style={styles.testButtonText}>
-                🧪 {showLogin ? 'Fill Test Login' : 'Generate Test Account'}
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </View>
+          </ScrollView>
+        </KeyboardAvoidingView>
       </SafeAreaView>
     );
   }
 
-  // Main Chat Interface (when logged in)
+  // Main Chat Interface (when logged in) - FIXED with KeyboardAvoidingView
   return (
     <SafeAreaView style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Lilibet</Text>
-        <View style={styles.headerRight}>
-          <Text style={styles.welcomeText}>Hi {user?.displayName || 'Student'}!</Text>
-          <TouchableOpacity onPress={handleLogout} style={styles.logoutButton}>
-            <Text style={styles.logoutText}>Logout</Text>
+      <KeyboardAvoidingView 
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={styles.container}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+      >
+        {/* Header */}
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>Lilibet</Text>
+          <View style={styles.headerRight}>
+            <Text style={styles.welcomeText}>Hi {user?.displayName || 'Student'}!</Text>
+            <TouchableOpacity onPress={handleLogout} style={styles.logoutButton}>
+              <Text style={styles.logoutText}>Logout</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Subject Selector */}
+        <View style={styles.subjectContainer}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            {subjects.map(subject => (
+              <TouchableOpacity
+                key={subject}
+                style={[styles.subjectButton, selectedSubject === subject && styles.subjectActive]}
+                onPress={() => setSelectedSubject(subject)}
+              >
+                <Text style={[styles.subjectText, selectedSubject === subject && styles.subjectTextActive]}>
+                  {subject}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+
+        {/* Messages - Now properly scrollable */}
+        <ScrollView 
+          ref={scrollViewRef} 
+          style={styles.messagesContainer}
+          contentContainerStyle={styles.messagesContent}
+          keyboardShouldPersistTaps="handled"
+          onContentSizeChange={() => scrollViewRef.current?.scrollToEnd({ animated: true })}
+        >
+          {messages.map((message, index) => (
+            <View key={index} style={[
+              styles.message,
+              message.role === 'user' ? styles.userMessage : styles.assistantMessage
+            ]}>
+              <Text style={[
+                styles.messageText,
+                message.role === 'user' ? styles.userMessageText : styles.assistantMessageText
+              ]}>
+                {message.content}
+              </Text>
+            </View>
+          ))}
+          {isSending && (
+            <View style={styles.loadingMessage}>
+              <ActivityIndicator size="small" color="#007AFF" />
+              <Text style={styles.loadingMessageText}>Thinking...</Text>
+            </View>
+          )}
+        </ScrollView>
+
+        {/* Input - Fixed with better keyboard handling */}
+        <View style={styles.inputContainer}>
+          <TextInput
+            ref={inputRef}
+            style={styles.chatInput}
+            value={inputText}
+            onChangeText={setInputText}
+            placeholder="Ask me anything..."
+            placeholderTextColor="#999"
+            multiline={Platform.OS === 'android'}  // Only multiline on Android
+            maxLength={1000}
+            returnKeyType={Platform.OS === 'ios' ? "send" : "default"}
+            blurOnSubmit={true}
+            onSubmitEditing={() => {
+              if (inputText.trim() && Platform.OS === 'ios') {
+                sendMessage();
+              }
+            }}
+            // Enable return key to send on iOS
+            enablesReturnKeyAutomatically={true}
+          />
+          <TouchableOpacity
+            style={[styles.sendButton, !inputText.trim() && styles.sendButtonDisabled]}
+            onPress={sendMessage}
+            disabled={!inputText.trim() || isSending}
+          >
+            <Text style={styles.sendButtonText}>Send</Text>
           </TouchableOpacity>
         </View>
-      </View>
-
-      {/* Subject Selector */}
-      <View style={styles.subjectContainer}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          {subjects.map(subject => (
-            <TouchableOpacity
-              key={subject}
-              style={[styles.subjectButton, selectedSubject === subject && styles.subjectActive]}
-              onPress={() => setSelectedSubject(subject)}
-            >
-              <Text style={[styles.subjectText, selectedSubject === subject && styles.subjectTextActive]}>
-                {subject}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-      </View>
-
-      {/* Messages */}
-      <ScrollView 
-        ref={scrollViewRef} 
-        style={styles.messagesContainer}
-        onContentSizeChange={() => scrollViewRef.current?.scrollToEnd({ animated: true })}
-      >
-        {messages.map((message, index) => (
-          <View key={index} style={[
-            styles.message,
-            message.role === 'user' ? styles.userMessage : styles.assistantMessage
-          ]}>
-            <Text style={[
-              styles.messageText,
-              message.role === 'user' ? styles.userMessageText : styles.assistantMessageText
-            ]}>
-              {message.content}
-            </Text>
-          </View>
-        ))}
-        {isSending && (
-          <View style={styles.loadingMessage}>
-            <ActivityIndicator size="small" color="#007AFF" />
-            <Text style={styles.loadingMessageText}>Thinking...</Text>
-          </View>
-        )}
-      </ScrollView>
-
-      {/* Input */}
-      <View style={styles.inputContainer}>
-        <TextInput
-          style={styles.chatInput}
-          value={inputText}
-          onChangeText={setInputText}
-          placeholder="Ask me anything..."
-          placeholderTextColor="#999"
-          multiline
-        />
-        <TouchableOpacity
-          style={[styles.sendButton, !inputText.trim() && styles.sendButtonDisabled]}
-          onPress={sendMessage}
-          disabled={!inputText.trim() || isSending}
-        >
-          <Text style={styles.sendButtonText}>Send</Text>
-        </TouchableOpacity>
-      </View>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -491,7 +543,11 @@ const styles = StyleSheet.create({
     color: '#000000',
   },
   
-  // Auth Styles
+  // Auth Styles - Updated for better keyboard handling
+  authScrollContainer: {
+    flexGrow: 1,
+    justifyContent: 'center',
+  },
   authContainer: {
     flex: 1,
     padding: 20,
@@ -614,7 +670,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 
-  // Chat Styles
+  // Chat Styles - Updated for better keyboard handling
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -677,8 +733,11 @@ const styles = StyleSheet.create({
   },
   messagesContainer: {
     flex: 1,
-    padding: 16,
     backgroundColor: '#FFFFFF',
+  },
+  messagesContent: {
+    padding: 16,
+    paddingBottom: 20,
   },
   message: {
     maxWidth: '80%',
@@ -698,6 +757,7 @@ const styles = StyleSheet.create({
   },
   messageText: {
     fontSize: 16,
+    lineHeight: 22,
   },
   userMessageText: {
     color: '#FFFFFF',
@@ -726,6 +786,7 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: '#E0E0E0',
     alignItems: 'flex-end',
+    minHeight: 80,
   },
   chatInput: {
     flex: 1,
@@ -738,13 +799,16 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#000000',
     backgroundColor: '#FFFFFF',
-    maxHeight: 100,
+    maxHeight: 120,
+    minHeight: 44,
   },
   sendButton: {
     backgroundColor: '#007AFF',
     borderRadius: 20,
-    paddingHorizontal: 16,
+    paddingHorizontal: 20,
     paddingVertical: 12,
+    minHeight: 44,
+    justifyContent: 'center',
   },
   sendButtonDisabled: {
     backgroundColor: '#CCCCCC',
